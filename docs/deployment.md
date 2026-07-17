@@ -46,7 +46,7 @@ make dev-postgres
 make test-postgres
 ```
 
-SQLite makes the demo runnable without credentials or hosted dependencies; it is not the hosted architecture. CI also migrates/seeds/tests a localhost Postgres 16 service, and deployed environments use Neon Postgres. Pytest defaults to an isolated temporary SQLite database; it may honor an explicit database URL only for `APP_ENV=test`, a local host, and `ALLOW_TEST_DATABASE_RESET=true`. That guard must never be enabled for a Neon or production URL.
+SQLite makes the demo runnable without credentials or hosted dependencies; it is not the hosted architecture. CI also migrates/seeds/tests a localhost Postgres 16 service, and deployed environments use Neon Postgres. Pytest defaults to an isolated temporary SQLite database; it may honor an explicit database URL only for `APP_ENV=test`, `ALLOW_TEST_DATABASE_RESET=true`, and either a local host or an exact `EPHEMERAL_TEST_DATABASE_HOST`. The remote-host option is reserved for an expiring, disposable Neon branch created and deleted by the infrastructure operator; it must never name staging or production.
 
 The CI matrix independently runs backend SQLite tests, a Postgres 16 migration/seed/invariant suite, web lint/type/test/build, and an integrated Playwright journey. The browser journey keeps `NEXT_PUBLIC_DEMO_TEST_MODE=false` and exercises real signed login/persona-switch cookies. `X-Demo-Persona` is reserved for isolated API tests and is accepted only when backend `APP_ENV=test` is explicit; it must never authenticate the integrated browser journey.
 
@@ -69,6 +69,7 @@ make reset
 | `AMBROSIA_API_ORIGIN` | Preview/Production server only | Base URL of the corresponding Modal ASGI function; used by the same-origin `/api` rewrite. |
 | `NEXT_PUBLIC_APP_URL` | public | Canonical web origin for links; contains no secret. |
 | `NEXT_PUBLIC_DEMO_TEST_MODE` | public | Keep `false` for local, preview, production and integrated E2E. It may be `true` only in an isolated frontend/API harness whose backend is explicitly `APP_ENV=test`; that harness alone may send `X-Demo-Persona`. |
+| `PRESENTER_ACCESS_CODE` | protected server-only | Synthetic hosted-E2E credential synchronized with Modal and GitHub; never exposed through `NEXT_PUBLIC_*` or application responses. |
 | `BLOB_READ_WRITE_TOKEN` | server only, if uploads enabled | Private synthetic upload adapter. Do not expose to the browser. |
 
 Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to Modal, preserving the browser's session request. Modal authenticates and authorizes it, assigns or returns `X-Request-ID`, and emits private/no-store headers; Next adds matching no-store and `Vary: Cookie` headers. A lightweight Next.js request Proxy performs only an optimistic product-route cookie check, keeping presentation routes static and prefetchable; Modal remains the authorization boundary for every read and mutation. This demo does not implement a custom route-handler proxy or a header/body allowlist. Explicit forwarding rules and body/time limits are production gates if the API rewrite is replaced by an application proxy.
@@ -117,7 +118,7 @@ The script:
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
 3. replaces Modal runtime/OpenAI secrets and matching GitHub environment secrets;
-4. replaces Vercel Preview/Production API origins, public origin, and demo-test flag;
+4. replaces Vercel Preview/Production API origins, public origin, demo-test flag, and protected presenter credential;
 5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
 6. invokes the repository AI attestation through the Responses API and fails closed unless OpenAI returns `gpt-5.6-luna` with low reasoning and a schema- plus semantic-valid body;
 7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.

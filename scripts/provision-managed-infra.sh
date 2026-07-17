@@ -118,6 +118,10 @@ for target in production preview development; do
   npx --yes vercel@50.28.0 --cwd apps/web env add NEXT_PUBLIC_DEMO_TEST_MODE "$target" \
     --force --value false --yes >/dev/null
 done
+npx --yes vercel@50.28.0 --cwd apps/web env add PRESENTER_ACCESS_CODE production \
+  --force --value "$presenter" --yes >/dev/null
+npx --yes vercel@50.28.0 --cwd apps/web env add PRESENTER_ACCESS_CODE preview "" \
+  --force --value "$presenter" --yes >/dev/null
 echo "Vercel environment bindings are synchronized."
 
 deploy_and_attest() {
