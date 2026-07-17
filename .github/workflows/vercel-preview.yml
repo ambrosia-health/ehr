@@ -48,6 +48,7 @@ jobs:
     if: >-
       github.event_name == 'deployment_status' &&
       github.event.deployment_status.state == 'success' &&
+      github.event.deployment.creator.login == 'vercel[bot]' &&
       github.event.deployment.environment != 'Production' &&
       startsWith(github.event.deployment_status.target_url, 'https://')
     runs-on: ubuntu-latest
