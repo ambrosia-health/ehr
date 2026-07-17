@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify frozen migration baseline
+        run: sha256sum --check .github/frozen-migrations.sha256
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Install backend
+        run: uv sync --project backend --extra dev --locked
+
+      - name: Lint backend
+        run: uv run --project backend --extra dev ruff check backend
+
+      - name: Test backend
+        run: uv run --project backend --extra dev pytest backend/tests
+
+  postgres-invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ambrosia
+          POSTGRES_USER: ambrosia
+          POSTGRES_PASSWORD: ambrosia-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ambrosia -d ambrosia"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      APP_ENV: test
+      DEMO_MODE: "true"
+      ALLOW_SYNTHETIC_DEMO_RESET: "true"
+      ALLOW_TEST_DATABASE_RESET: "true"
+      AUTO_CREATE_SCHEMA: "false"
+      AUTO_SEED: "false"
+      AUTH_SESSION_SECRET: ambrosia-ci-synthetic-session-secret-not-for-shared-use
+      DEMO_PRESENTER_SECRET: ambrosia-ci-presenter
+      MODAL_INTERNAL_AUTH_SECRET: ambrosia-ci-modal-internal-not-for-shared-use
+      DATABASE_URL: postgresql+asyncpg://ambrosia:ambrosia-ci-only@127.0.0.1:5432/ambrosia
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Install backend
+        run: make backend-install
+
+      - name: Migrate and seed Postgres
+        run: |
+          make migrate
+          make seed
+          make verify-data
+
+      - name: Verify Postgres-backed invariants
+        run: make test-backend
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AMBROSIA_API_ORIGIN: http://127.0.0.1:8000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web
+        run: npm ci
+
+      - name: Lint web
+        run: npm run lint
+
+      - name: Typecheck web
+        run: npm run typecheck
+
+      - name: Test web
+        run: npm run test
+
+      - name: Build web
+        run: npm run build
+
+  e2e:
+    needs: [backend, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      APP_ENV: test
+      DEMO_MODE: "true"
+      ALLOW_SYNTHETIC_DEMO_RESET: "true"
+      AUTO_CREATE_SCHEMA: "false"
+      AUTO_SEED: "false"
+      AUTH_SESSION_SECRET: ambrosia-ci-synthetic-session-secret-not-for-shared-use
+      DEMO_PRESENTER_SECRET: ambrosia-ci-presenter
+      MODAL_INTERNAL_AUTH_SECRET: ambrosia-ci-modal-internal-not-for-shared-use
+      DATABASE_URL: sqlite+aiosqlite:///./.ambrosia/e2e.db
+      AMBROSIA_API_ORIGIN: http://127.0.0.1:8000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
+      E2E_LIVE_API: "1"
+      PRESENTER_ACCESS_CODE: ambrosia-ci-presenter
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install application
+        run: |
+          mkdir -p .ambrosia
+          make backend-install web-install
+          make migrate seed verify-data
+
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run integrated browser journey
+        shell: bash
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/ambrosia-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health >/dev/null; then break; fi
+            if [[ "$attempt" == "30" ]]; then
+              cat "$RUNNER_TEMP/ambrosia-api.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          PLAYWRIGHT_JSON_OUTPUT_FILE="$RUNNER_TEMP/playwright-results.json" \
+            npm --prefix apps/web run e2e -- --reporter=github,json
+          .venv/bin/python - "$RUNNER_TEMP/playwright-results.json" <<'PY'
+          import json
+          import sys
+          from collections import Counter
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text())
+
+          def test_cases(suite):
+              for spec in suite.get("specs", []):
+                  yield from spec.get("tests", [])
+              for child in suite.get("suites", []):
+                  yield from test_cases(child)
+
+          cases = [case for suite in report.get("suites", []) for case in test_cases(suite)]
+          statuses = [
+              result.get("status", "unknown")
+              for case in cases
+              for result in case.get("results", [])
+          ]
+          executed = [status for status in statuses if status != "skipped"]
+          if not cases or not executed:
+              raise SystemExit("Playwright reported no executed tests; refusing an all-skipped E2E gate")
+          print(f"Playwright executed {len(cases)} case(s): {dict(Counter(statuses))}")
+          PY
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ambrosia-e2e-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+            ${{ runner.temp }}/ambrosia-api.log

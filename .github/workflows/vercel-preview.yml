@@ -1,0 +1,64 @@
+name: Vercel preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/vercel-preview.yml"
+  deployment_status:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: vercel-preview-${{ github.event.pull_request.number || github.event.deployment.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AMBROSIA_API_ORIGIN: https://api.invalid
+      NEXT_PUBLIC_APP_URL: https://preview.invalid
+      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install and verify
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run test
+          npm run build
+
+  smoke:
+    if: >-
+      github.event_name == 'deployment_status' &&
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment != 'Production' &&
+      startsWith(github.event.deployment_status.target_url, 'https://')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PREVIEW_URL: ${{ github.event.deployment_status.target_url }}
+    steps:
+      - name: Smoke Vercel preview and Modal rewrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 20 "$PREVIEW_URL/" >/dev/null
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 20 "$PREVIEW_URL/api/health" |
+            python -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status") == "healthy" and data.get("database") == "healthy", data'

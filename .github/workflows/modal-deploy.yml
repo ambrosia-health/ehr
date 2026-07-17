@@ -1,0 +1,111 @@
+name: Modal deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "Makefile"
+      - ".github/workflows/modal-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Modal/GitHub environment to deploy
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modal-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+    env:
+      MODAL_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      NEON_DATABASE_URL_DIRECT: ${{ secrets.NEON_DATABASE_URL_DIRECT }}
+      MODAL_API_HEALTH_URL: ${{ secrets.MODAL_API_HEALTH_URL }}
+      MODAL_AI_URL: ${{ secrets.MODAL_AI_URL }}
+      MODAL_INTERNAL_AUTH_SECRET: ${{ secrets.MODAL_INTERNAL_AUTH_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify frozen migration baseline
+        run: sha256sum --check .github/frozen-migrations.sha256
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
+          test -n "$NEON_DATABASE_URL_DIRECT"
+          test -n "$MODAL_API_HEALTH_URL"
+          test -n "$MODAL_AI_URL"
+          test -n "$MODAL_INTERNAL_AUTH_SECRET"
+
+      - name: Install and verify backend
+        run: |
+          make backend-install
+          make backend-check test-backend
+
+      - name: Apply Neon migrations
+        run: DATABASE_URL="$NEON_DATABASE_URL_DIRECT" make migrate
+
+      - name: Deploy Modal app
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_SHA:0:12}"
+          .venv/bin/modal deploy -m backend.modal_app --env "$MODAL_ENVIRONMENT" --tag "$tag"
+
+      - name: Smoke Modal API
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MODAL_API_HEALTH_URL"
+          curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 20 "$MODAL_API_HEALTH_URL"
+
+      - name: Warm and attest live structured inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "$headers" "$body"' EXIT
+          prompt='Ambrosia chart_summary prompt. Use minimum necessary context and return schema-valid JSON.'
+          prompt_hash="$(printf '%s' "$prompt" | sha256sum | cut -d ' ' -f 1)"
+          payload="$(PROMPT="$prompt" PROMPT_HASH="$prompt_hash" python -c 'import json, os; print(json.dumps({"capability":"chart_summary","context":{"patientName":"Synthetic readiness patient"},"prompt":{"version":"2026.1","template":os.environ["PROMPT"],"sha256":os.environ["PROMPT_HASH"]}}))')"
+          for attempt in 1 2; do
+            echo "Structured inference attestation attempt $attempt of 2"
+            curl --fail --silent --show-error --max-time 175 \
+              --dump-header "$headers" --output "$body" \
+              -H "X-Ambrosia-Internal: $MODAL_INTERNAL_AUTH_SECRET" \
+              -H 'Content-Type: application/json' \
+              --data "$payload" "$MODAL_AI_URL" || true
+            if grep -Fqi 'x-ambrosia-ai-provider: modal_open_weights' "$headers" && \
+               grep -Fqi 'x-ambrosia-ai-fallback: false' "$headers" && \
+               grep -Fqi 'x-ambrosia-ai-model: Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775' "$headers" && \
+               grep -Fqi "x-ambrosia-ai-prompt-hash: $prompt_hash" "$headers"; then
+              python -c 'import json, sys; data=json.load(open(sys.argv[1])); assert data.get("headline") and data.get("activeConcerns")' "$body"
+              exit 0
+            fi
+          done
+          echo 'Modal live-model attestation failed after cold-start retry' >&2
+          exit 1

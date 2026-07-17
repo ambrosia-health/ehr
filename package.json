@@ -1,0 +1,23 @@
+{
+  "name": "ambrosia-health-ehr",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Synthetic-data dermatology operating-system demo",
+  "packageManager": "npm@11.17.0",
+  "scripts": {
+    "bootstrap": "make bootstrap",
+    "dev": "make dev",
+    "dev:postgres": "make dev-postgres",
+    "seed": "make seed",
+    "reset": "make reset",
+    "verify": "make verify-data",
+    "test": "make test",
+    "test:postgres": "make test-postgres",
+    "test:e2e": "make e2e",
+    "check": "make check",
+    "demo:health": "make demo-health"
+  },
+  "engines": {
+    "node": ">=22 <25"
+  }
+}
