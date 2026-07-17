@@ -19,6 +19,7 @@ openai_secret = modal.Secret.from_name("ambrosia-openai")
 @app.function(
     image=image,
     secrets=[runtime_secret, openai_secret],
+    region="us-east",
     timeout=300,
     max_containers=4,
 )
@@ -32,6 +33,7 @@ def api():
 @app.function(
     image=image,
     secrets=[runtime_secret],
+    region="us-east",
     schedule=modal.Cron("*/5 * * * *"),
     timeout=120,
 )

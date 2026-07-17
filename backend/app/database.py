@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from .config import get_settings
+from .observability import instrument_database_engine
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -35,6 +36,7 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
     else:
         kwargs.update({"pool_size": 5, "max_overflow": 5, "pool_recycle": 300})
     engine = create_async_engine(url, **kwargs)
+    instrument_database_engine(engine)
     if url.startswith("sqlite"):
         event.listen(engine.sync_engine, "connect", _enable_sqlite_foreign_keys)
     return engine

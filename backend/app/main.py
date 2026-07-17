@@ -75,6 +75,7 @@ from .models import (
     WorkflowRun,
     utcnow,
 )
+from .observability import begin_request, finish_request, reset_request
 from .providers import (
     clearinghouse_provider,
     eligibility_input_fingerprint,
@@ -188,40 +189,70 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def prevent_sensitive_response_caching(request: Request, call_next):
+async def secure_and_observe_requests(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    response = None
-    if request.url.path.startswith("/api") and request.method in {"POST", "PUT", "PATCH"}:
-        content_length = request.headers.get("Content-Length")
-        if content_length:
-            try:
-                declared_length = int(content_length)
-            except ValueError:
-                declared_length = -1
-            if declared_length < 0:
-                response = CamelJSONResponse(
-                    status_code=400, content={"detail": "Invalid Content-Length header"}
-                )
-            elif declared_length > MAX_API_REQUEST_BYTES:
-                response = CamelJSONResponse(
-                    status_code=413, content={"detail": "API request body exceeds 256 KB"}
-                )
+    metrics, metrics_token = begin_request(request_id)
+    response: Response | None = None
+    error_type: str | None = None
+    try:
+        if request.url.path.startswith("/api") and request.method in {
+            "POST",
+            "PUT",
+            "PATCH",
+        }:
+            content_length = request.headers.get("Content-Length")
+            if content_length:
+                try:
+                    declared_length = int(content_length)
+                except ValueError:
+                    declared_length = -1
+                if declared_length < 0:
+                    response = CamelJSONResponse(
+                        status_code=400,
+                        content={"detail": "Invalid Content-Length header"},
+                    )
+                elif declared_length > MAX_API_REQUEST_BYTES:
+                    response = CamelJSONResponse(
+                        status_code=413,
+                        content={"detail": "API request body exceeds 256 KB"},
+                    )
+            if response is None:
+                body = await request.body()
+                if len(body) > MAX_API_REQUEST_BYTES:
+                    response = CamelJSONResponse(
+                        status_code=413,
+                        content={"detail": "API request body exceeds 256 KB"},
+                    )
         if response is None:
-            body = await request.body()
-            if len(body) > MAX_API_REQUEST_BYTES:
-                response = CamelJSONResponse(
-                    status_code=413, content={"detail": "API request body exceeds 256 KB"}
-                )
-    if response is None:
-        response = await call_next(request)
-    if request.url.path.startswith("/api"):
-        response.headers["Cache-Control"] = "private, no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Vary"] = "Cookie, Authorization"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Request-ID"] = request_id
-    return response
+            response = await call_next(request)
+        return response
+    except Exception as error:
+        error_type = type(error).__name__
+        raise
+    finally:
+        route_object = request.scope.get("route")
+        route = getattr(route_object, "path", "<unmatched>")
+        content_length = response.headers.get("Content-Length") if response else None
+        response_bytes = int(content_length) if content_length and content_length.isdigit() else None
+        summary = finish_request(
+            metrics,
+            method=request.method,
+            route=route,
+            status_code=response.status_code if response else 500,
+            environment=settings.environment,
+            execution_platform=settings.execution_platform,
+            response_bytes=response_bytes,
+            error_type=error_type,
+        )
+        if response and request.url.path.startswith("/api"):
+            response.headers["Cache-Control"] = "private, no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Vary"] = "Cookie, Authorization"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Request-ID"] = request_id
+            response.headers["Server-Timing"] = summary.server_timing
+        reset_request(metrics_token)
 
 
 Session = Annotated[AsyncSession, Depends(get_session)]
