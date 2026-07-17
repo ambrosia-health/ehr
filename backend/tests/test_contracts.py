@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.seed as seed_module
 from app.cli import verify
 from app.config import Settings
-from app.database import Base, SessionLocal
+from app.database import Base, SessionLocal, engine
 from app.main import clear_session_cookie
 from app.models import Membership, Organization, Patient, Role, User
 from app.seed import canonical_ids, seed_database
@@ -381,7 +381,13 @@ async def test_owner_is_not_superuser_and_presenter_delegation_is_explicit(clien
     assert delegated.json()["session"]["presenter"] is True
     health = await client.get("/api/demo/health")
     assert health.status_code == 200
-    assert health.json()["database"] == "sqlite_local"
+    expected_database = "sqlite_local" if engine.dialect.name == "sqlite" else "neon_postgres"
+    expected_database_service = (
+        "SQLite local source of truth"
+        if engine.dialect.name == "sqlite"
+        else "Neon Postgres source of truth"
+    )
+    assert health.json()["database"] == expected_database
     assert health.json()["aiProvider"] == "local_deterministic_fallback"
     presenter_bootstrap = (await client.get("/api/demo/bootstrap")).json()
     assert presenter_bootstrap["triggerIds"]["pathologyResultId"] is None
@@ -393,7 +399,7 @@ async def test_owner_is_not_superuser_and_presenter_delegation_is_explicit(clien
         for item in presenter_bootstrap["claims"]
     )
     assert any(
-        item["service"] == "SQLite local source of truth" for item in presenter_bootstrap["health"]
+        item["service"] == expected_database_service for item in presenter_bootstrap["health"]
     )
     switched = await client.post("/api/auth/switch", json={"persona": "provider"})
     assert switched.status_code == 200
