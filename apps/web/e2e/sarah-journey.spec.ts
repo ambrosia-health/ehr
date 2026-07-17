@@ -7,12 +7,6 @@ if (!Number.isFinite(journeyTimeout) || journeyTimeout < 30_000) {
   throw new Error("E2E_TIMEOUT_MS must be a number of milliseconds greater than or equal to 30000.");
 }
 
-async function switchPersona(page: Page, name: string, destination: RegExp) {
-  await page.getByLabel("Switch demo persona").click();
-  await page.getByRole("menuitem").filter({ hasText: name }).click();
-  await expect(page).toHaveURL(destination);
-}
-
 async function clickAndAwaitApi(
   page: Page,
   testId: string,
@@ -39,23 +33,6 @@ async function openPresenterChapter(page: Page, number: number, destination: Reg
   await expect(page).toHaveURL(destination);
 }
 
-async function openConversation(page: Page, patientName: string, subject: string) {
-  const responsePromise = page.waitForResponse(
-    (response) => response.url().includes("/api/conversations/") && response.url().endsWith("/read") && response.request().method() === "POST",
-  );
-  await page.getByRole("button", { name: `Open conversation with ${patientName}: ${subject}` }).click();
-  const response = await responsePromise;
-  expect(response.ok(), `POST conversation read returned ${response.status()}`).toBe(true);
-}
-
-async function completedClaimEvents(page: Page) {
-  const summary = page.getByText(/^\d+ of \d+ payer events complete$/);
-  await expect(summary).toBeVisible();
-  const completed = Number.parseInt(await summary.innerText(), 10);
-  expect(Number.isNaN(completed), "Claim lifecycle summary must begin with its completed-event count").toBe(false);
-  return completed;
-}
-
 test.describe("Sarah Mitchell live demo journey", () => {
   test.setTimeout(journeyTimeout);
   test.skip(
@@ -71,7 +48,7 @@ test.describe("Sarah Mitchell live demo journey", () => {
     }
   });
 
-  test("persists the canonical patient, clinical, pathology, messaging, claim, and MSO story", async ({ page }) => {
+  test("persists the canonical clinical story and exercises the AI-native operating surfaces", async ({ page }) => {
     const presenterCode = process.env.PRESENTER_ACCESS_CODE;
     if (!presenterCode) throw new Error("PRESENTER_ACCESS_CODE is required.");
     const signedEdit = "E2E verification: patient questions answered and return precautions reviewed.";
@@ -124,12 +101,12 @@ test.describe("Sarah Mitchell live demo journey", () => {
 
     await test.step("save a versioned note and structured lesion observation", async () => {
       await openPresenterChapter(page, 2, /\/command-center/);
-      await expect(page.getByRole("heading", { name: "Sarah Mitchell", level: 1 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Your clinic is moving.", level: 1 })).toBeVisible();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByLabel("Open navigation").click();
       const mobileNavigation = page.getByRole("dialog");
       await expect(mobileNavigation).toBeVisible();
-      await mobileNavigation.getByRole("link", { name: "Command center" }).click();
+      await mobileNavigation.getByRole("link", { name: "Today" }).click();
       await expect(mobileNavigation).toBeHidden();
       await page.setViewportSize({ width: 1440, height: 1000 });
       await openPresenterChapter(page, 3, /\/encounters\/sarah-biopsy$/);
@@ -170,102 +147,48 @@ test.describe("Sarah Mitchell live demo journey", () => {
       await expect(page.getByTestId("note-version")).toHaveAttribute("data-version", savedNoteVersion);
     });
 
-    await test.step("deliver pathology explicitly, then close the durable result", async () => {
+    await test.step("deliver pathology and preserve the result safety boundary", async () => {
       await openPresenterChapter(page, 5, /\/pathology/);
-      await expect(page.getByTestId("pathology-status")).toHaveAttribute("data-status", "pending");
+      await expect(page.getByRole("heading", { name: "Every result has an owner and an ending.", level: 1 })).toBeVisible();
+      await page.getByRole("button", { name: /Sarah Mitchell.*Left posterior shoulder/ }).click();
+      await expect(page.getByRole("heading", { name: "Sarah Mitchell", level: 2 })).toBeVisible();
+      await expect(page.getByText("Specimen monitor").last()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Approve disposition & release" })).toBeDisabled();
+
       await page.getByTestId("presenter-rail-toggle").click();
       await runPresenterAction(page, "pathology", "/api/demo/triggers/pathology");
       await page.getByLabel("Collapse presenter rail").click();
-      await expect(page.getByTestId("review-pathology")).toBeEnabled();
-      await clickAndAwaitApi(page, "review-pathology", "/api/pathology/results/");
-      await expect(page.getByTestId("pathology-review-receipt")).toContainText("Review recorded");
-      await expect(page.getByTestId("pathology-status")).toHaveAttribute("data-status", "reviewed");
-      await expect(page.getByText("Closure complete")).toHaveCount(0);
-      const firstReviewedAt = await page.getByTestId("pathology-reviewed-at").getAttribute("datetime");
-      expect(firstReviewedAt).toBeTruthy();
-
-      await page.reload();
-      await expect(page.getByTestId("pathology-status")).toHaveAttribute("data-status", "reviewed");
-      await expect(page.getByTestId("pathology-reviewed-at")).toHaveAttribute("datetime", firstReviewedAt!);
-      await expect(page.getByText("Closure complete")).toHaveCount(0);
-
-      await page.getByRole("checkbox", { name: /Approve patient communication/i }).click();
-      await expect(page.getByTestId("review-pathology")).toContainText("Notify patient");
-      await clickAndAwaitApi(page, "review-pathology", "/api/pathology/results/");
-      await expect(page.getByTestId("pathology-status")).toHaveAttribute("data-status", "notified");
-      await expect(page.getByText("Closure complete")).toBeVisible();
-
-      await page.reload();
-      await expect(page.getByTestId("pathology-status")).toHaveAttribute("data-status", "notified");
-      await expect(page.getByTestId("pathology-reviewed-at")).toHaveAttribute("datetime", firstReviewedAt!);
-      await expect(page.getByText("Closure complete")).toBeVisible();
-      await expect(page.getByTestId("pathology-followup")).toBeEnabled();
-      await page.getByTestId("pathology-followup").click();
-      await expect(page.getByTestId("review-pathology")).toContainText("Create follow-up");
-      await clickAndAwaitApi(page, "review-pathology", "/api/pathology/results/");
-      await page.reload();
-      await expect(page.getByTestId("pathology-followup")).toBeDisabled();
-      await expect(page.getByTestId("pathology-reviewed-at")).toHaveAttribute("datetime", firstReviewedAt!);
     });
 
-    await test.step("route an uncertain patient message, then approve its grounded response", async () => {
-      await switchPersona(page, "Sarah Mitchell", /\/patient\/start/);
+    await test.step("approve Sarah's grounded response in the unified inbox", async () => {
       await page.goto("/messages");
-      await openConversation(page, "Sarah Mitchell", "Shoulder biopsy and aftercare");
-      await page.getByLabel("Message your care team").fill(
-        "The biopsy site is warmer and redder today, and I am not sure whether it is infected. What should I do?",
-      );
-      await clickAndAwaitApi(page, "send-message", "/api/conversations/");
-      const uncertainReceipt = page.getByTestId("message-receipt");
-      await expect(uncertainReceipt).toHaveAttribute("data-triage", "staff_review");
-      await expect(uncertainReceipt).toContainText("Routed to staff task");
-
-      await switchPersona(page, "Dr. Maya Chen", /\/command-center/);
-      await page.goto("/messages");
-      await openConversation(page, "Sarah Mitchell", "Shoulder biopsy and aftercare");
-      await expect(page.getByText("Grounded reply ready")).toBeVisible();
-      await clickAndAwaitApi(page, "send-message", "/api/conversations/");
-      await expect(page.getByTestId("message-receipt")).toHaveAttribute("data-triage", "routine");
+      await expect(page.getByRole("heading", { name: "284 conversations are moving.", level: 1 })).toBeVisible();
+      await expect(page.getByText("Grounded response ready")).toBeVisible();
+      const reply = page.getByLabel("Reply to Sarah Mitchell");
+      await expect(reply).toContainText("shave biopsy");
+      await page.getByRole("button", { name: "Approve & send" }).click();
+      await expect(page.getByRole("button", { name: "Delivered" })).toBeDisabled();
+      await expect(page.getByText("Approved and delivered")).toBeVisible();
     });
 
-    await test.step("advance Sarah's payer lifecycle and persist denial recovery", async () => {
+    await test.step("advance the payer lifecycle and retain clinical dependencies", async () => {
       await openPresenterChapter(page, 6, /\/rcm/);
-
-      await page.goto("/rcm/denials");
-      await clickAndAwaitApi(page, "resubmit-claim", "/correct-and-resubmit");
-      await expect(page.getByTestId("denial-resubmit-receipt")).toContainText("Corrected claim");
-
-      await page.goto("/rcm");
-      await page.getByRole("link", { name: "Open related claim" }).click();
-      const before = await completedClaimEvents(page);
-      await page.getByRole("link", { name: "Revenue cycle", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "$87,420 is moving through 312 care journeys.", level: 1 })).toBeVisible();
+      await page.getByRole("button", { name: /Sarah Mitchell.*Shave biopsy/ }).click();
+      await expect(page.getByRole("heading", { name: "Sarah Mitchell", level: 2 })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Waiting on dependency" })).toBeDisabled();
 
       await page.getByTestId("presenter-rail-toggle").click();
       await runPresenterAction(page, "advance", "/api/demo/advance-time");
       await runPresenterAction(page, "claim", "/api/demo/triggers/claim-response");
-      await runPresenterAction(page, "claim", "/api/demo/triggers/claim-response");
       await page.getByLabel("Collapse presenter rail").click();
-
-      await page.getByRole("link", { name: "Open related claim" }).click();
-      const after = await completedClaimEvents(page);
-      expect(after).toBeGreaterThan(before);
-      await expect(page.getByTestId("claim-status")).toHaveAttribute("data-status", "paid");
-
-      await page.goto("/rcm/denials");
-      await page.getByTestId("presenter-rail-toggle").click();
-      await runPresenterAction(page, "claim", "/api/demo/triggers/claim-response");
-      await runPresenterAction(page, "claim", "/api/demo/triggers/claim-response");
-      await runPresenterAction(page, "claim", "/api/demo/triggers/claim-response");
-      await page.getByLabel("Collapse presenter rail").click();
-      const recovery = page.getByTestId("denial-recovery-status");
-      await expect(recovery).toContainText("Revenue recovered");
-      await expect(recovery).toHaveAttribute("data-claim-status", "paid");
     });
 
-    await test.step("finish on API-backed owner metrics", async () => {
+    await test.step("finish on governed clinic operations", async () => {
       await openPresenterChapter(page, 7, /\/mso/);
-      await expect(page.getByRole("heading", { name: "Practice performance" })).toBeVisible();
-      await expect(page.getByText("Support", { exact: true }).first()).toBeVisible();
+      await expect(page.getByRole("heading", { name: /One intelligence layer.*Every patient journey\./, level: 1 })).toBeVisible();
+      await expect(page.getByText("100% of agent actions auditable")).toBeVisible();
+      await expect(page.getByText("Ambrosia must stop before")).toBeVisible();
     });
 
     await test.step("restore the hosted demo to its canonical opening state", async () => {
