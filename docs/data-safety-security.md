@@ -4,7 +4,7 @@
 
 This repository is a synthetic-data demonstration. It is **not authorized for real patient data, clinical care, claims transmission, payment collection, or production messaging**. A polished demo, encryption by a cloud vendor, or passing tests does not establish HIPAA compliance, a BAA, clinical validation, or production readiness. The release gates in [`production-readiness.md`](./production-readiness.md) must be closed before any live-data use.
 
-That warning applies equally to the live managed site, its Vercel `Production` alias, the Neon `main` branch, and the Modal `production` environment. Those labels describe a synthetic-demo delivery topology; they are not compliance, privacy, clinical-safety, or real-data approvals.
+That warning applies equally to the live managed site, its Vercel `Production` alias, the Neon `main` branch, and the Modal `main` environment. Those labels describe a synthetic-demo delivery topology; they are not compliance, privacy, clinical-safety, or real-data approvals.
 
 All canonical people, photographs, coverage, pathology, claims, messages, and financial events must be generated or explicitly licensed synthetic fixtures. Do not paste real patient content into the UI, seed, logs, issue tracker, model provider, screenshots, or support channels.
 
@@ -106,13 +106,13 @@ Audit answers: who, in which tenant/role, did what, to which resource, when, fro
 ## Secrets and environment separation
 
 - `.env` is local only. GitHub Actions environment secrets authenticate Modal deployment/migration; Vercel environment variables configure the server-side rewrite; Modal Secrets hold runtime database/model/provider credentials. Native Vercel Git previews do not require `VERCEL_TOKEN` in GitHub.
-- The current synthetic demo separates Neon branches, Modal environments, Vercel environments, session keys, and internal-auth keys. A real-data deployment must establish the stronger account/project/database/role isolation selected by the approved threat model and vendor agreements.
-- Keep `AUTH_SESSION_SECRET` (user-session signatures), `DEMO_PRESENTER_SECRET` (demo delegation), and `MODAL_INTERNAL_AUTH_SECRET` (internal inference HTTP) distinct; compromise or rotation of one must not silently grant the others.
+- The current synthetic demo separates Neon branches, Modal environments, Vercel environments, session keys, and model-provider credentials. A real-data deployment must establish the stronger account/project/database/role isolation selected by the approved threat model and vendor agreements.
+- Keep `AUTH_SESSION_SECRET` (user-session signatures), `DEMO_PRESENTER_SECRET` (demo delegation), and `OPENAI_API_KEY` (model-provider access) distinct; compromise or rotation of one must not silently grant the others.
 - Do not expose server secrets under `NEXT_PUBLIC_*`. `AMBROSIA_API_ORIGIN` is server-only.
 - Rotate any credential printed to a terminal, pasted into chat/issues, committed, embedded in an artifact, or exposed to an untrusted preview. Purge history/artifacts after rotation as applicable.
 - Preview environments are synthetic-only, expire when practical, and cannot reach production providers.
 
-[`../scripts/provision-managed-infra.sh`](../scripts/provision-managed-infra.sh) is the controlled reconciliation path. It intentionally rotates session, presenter, and Modal-internal credentials while synchronizing dependent secret stores, then fails unless both Modal environments prove API/database health and authenticated exact-revision model provenance. Do not copy its resolved credentials into tickets, logs, local `.env` files, or browser configuration.
+[`../scripts/provision-managed-infra.sh`](../scripts/provision-managed-infra.sh) is the controlled reconciliation path. It intentionally rotates session and presenter credentials while synchronizing the OpenAI key from protected operator input into GitHub and Modal secret stores, then fails unless both Modal environments prove API/database health and the exact OpenAI model contract. Do not copy its resolved credentials into tickets, logs, local `.env` files, or browser configuration.
 
 ## Verification checklist
 

@@ -8,7 +8,8 @@ This document is the architectural contract for the Ambrosia synthetic dermatolo
 flowchart LR
     B["Browser\npatient · provider · staff · biller · owner"]
     V["Vercel\nNext.js 16 UI · same-origin /api rewrite · static synthetic assets"]
-    M["Modal\nFastAPI domain API · pinned T4 AI · workers · schedules"]
+    M["Modal\nFastAPI domain API · workers · schedules"]
+    O["OpenAI\nGPT-5.6 Luna · low reasoning"]
     N[("Neon Postgres\ndurable source of truth")]
     F["Optional Vercel Blob\nfuture private synthetic uploads"]
     P["Provider adapters\ndeterministic demo or live"]
@@ -18,6 +19,7 @@ flowchart LR
     M -->|"tenant-scoped transactions"| N
     M -.->|"future signed upload/download authorization"| F
     M -->|"explicit interfaces"| P
+    M -->|"Responses API · store=false"| O
     P -->|"normalized responses/events"| M
 ```
 
@@ -31,7 +33,7 @@ Non-negotiable boundaries:
 - A Modal URL remains hostile/public even when normally reached through Vercel. Modal must validate the signed user session and tenant membership itself.
 - `/api/demo/bootstrap` is an authenticated, server-side role-scoped read model—not an authorization shortcut. It may return only the patient, clinical, RCM, analytics, and presenter fields authorized for the verified session; the browser's persona state cannot broaden it.
 
-The zero-credential local default runs the same FastAPI application under Uvicorn with SQLite; Docker Postgres 16 is the optional dialect-fidelity target. The managed hosted demo uses native Vercel Git previews, Modal `staging`/`production`, and isolated synthetic Neon `staging`/`main` branches; a separate Neon `preview` branch supports isolated migration verification. Changing the persistence/runtime adapter must not change domain behavior. Hosted environment names do not imply authorization for real PHI or clinical production.
+The zero-credential local default runs the same FastAPI application under Uvicorn with SQLite; Docker Postgres 16 is the optional dialect-fidelity target. The managed hosted demo uses native Vercel Git previews, Modal `staging`/`main`, and isolated synthetic Neon `staging`/`main` branches; a separate Neon `preview` branch supports isolated migration verification. Changing the persistence/runtime adapter must not change domain behavior. Hosted environment names do not imply authorization for real PHI or clinical production.
 
 ## Dependency graph
 
@@ -48,7 +50,7 @@ flowchart TD
     SA --> PG[("Neon/Postgres")]
     IP --> SIM["Deterministic simulators"]
     IP --> LIVE["Future live healthcare providers"]
-    IP --> AI["Pinned Qwen on Modal + deterministic fallback"]
+    IP --> AI["OpenAI GPT-5.6 Luna + deterministic fallback"]
 
     EV["Committed domain event"] --> WF["Durable workflow run/event"]
     WF --> UC
@@ -162,7 +164,7 @@ flowchart LR
 
 An `ai_run` captures capability, input references/checksums, prompt version, model/fallback identity, structured output, latency, and status. It should not duplicate unrestricted chart content. Output is untrusted until schema and rule validation. UI labels distinguish AI-proposed, human-edited, approved, signed, and fallback-generated content.
 
-The managed model boundary is `Qwen/Qwen2.5-0.5B-Instruct` on a Modal T4, pinned to revision `7ae557604adf67be50417f59c2c2f167def9a775`. Its HTTP endpoint is separately authenticated and verifies prompt-template SHA-256 before generation. Exact provider/model/prompt headers, schema validation, and capability-specific semantic rules are required before the backend may record a live run; every failure routes to a deterministic, provenance-labeled proposal rather than gaining broader authority.
+The managed domain API calls OpenAI `gpt-5.6-luna` directly through the Responses API with `reasoning.effort=low` and `store=false`. There is no local model runtime, GPU allocation, or separate inference endpoint. Exact provider/model/reasoning configuration, prompt hashing, schema validation, and capability-specific semantic rules are required before the backend may record a live run; every failure routes to a deterministic, provenance-labeled proposal rather than gaining broader authority.
 
 ## Tenancy and time
 

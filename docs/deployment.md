@@ -7,7 +7,7 @@ This runbook preserves the three-platform boundary: Vercel hosts Next.js, Modal 
 | Environment | Web | API/workers | Database | Data/network policy |
 |---|---|---|---|---|
 | Local | Next.js dev on `:3000` | same FastAPI app under Uvicorn on `:8000` | SQLite zero-credential default; optional Docker Postgres 16 | canonical synthetic seed; deterministic provider adapters; local AI fallback |
-| Preview | native Vercel branch/PR Preview | managed Modal `staging` API | managed synthetic Neon `staging`; `preview` branch reserved for isolated migration/verification work | deterministic networks; authenticated pinned open-weights AI with deterministic fallback |
+| Preview | native Vercel branch/PR Preview | managed Modal `staging` API | managed synthetic Neon `staging`; `preview` branch reserved for isolated migration/verification work | deterministic networks; OpenAI GPT-5.6 Luna with low reasoning and deterministic fallback |
 | Staging | Vercel preview surface | managed Modal `staging` | isolated synthetic Neon `staging` branch | production-like demo configuration; no live provider credentials/data |
 | Production | Vercel Production alias | managed Modal `main` | isolated synthetic Neon `main` branch | publicly hosted synthetic demo; every real-world P0 gate remains open until separately evidenced |
 
@@ -15,16 +15,16 @@ Never point a preview at the hosted-production Neon branch or any live provider 
 
 ## Managed resource registry
 
-Identifiers and URLs below are operational metadata, not credentials. Connection strings, session keys, presenter codes, Modal internal-auth secrets, and CLI tokens remain only in platform secret stores.
+Identifiers and URLs below are operational metadata, not credentials. Connection strings, session keys, presenter codes, OpenAI keys, and CLI tokens remain only in platform secret stores.
 
 | Platform | Managed resource | Binding |
 |---|---|---|
 | Vercel | project `ambrosia-ehr`, ID `prj_ad1AsXV5muySOAyBsxMgcKAj1SVa` | repository `ambrosia-health/ehr`; Root Directory `apps/web`; production branch `main`; canonical site [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app); native Git previews enabled |
 | Neon | project `ambrosia-ehr`, ID `round-cloud-23718842`; database `ambrosia` | `main` / `br-still-wildflower-aunolqvx` (hosted production demo), `staging` / `br-rough-feather-auv415ro`, `preview` / `br-lingering-queen-au7d3n4t` |
-| Modal main | environment `main`, app `ambrosia-health-domain-api` | API `https://kshr-ai--ambrosia-health-domain-api-api.modal.run`; authenticated inference `https://kshr-ai--structured-inference.modal.run`; dashboard [deployment](https://modal.com/apps/kshr-ai/main/deployed/ambrosia-health-domain-api) |
-| Modal staging | environment `staging`, app `ambrosia-health-domain-api` | API `https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run`; authenticated inference `https://kshr-ai-staging--structured-inference.modal.run` |
+| Modal main | environment `main`, app `ambrosia-health-domain-api` | API `https://kshr-ai--ambrosia-health-domain-api-api.modal.run`; dashboard [deployment](https://modal.com/apps/kshr-ai/main/deployed/ambrosia-health-domain-api) |
+| Modal staging | environment `staging`, app `ambrosia-health-domain-api` | API `https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run` |
 
-The inference URLs reject requests without the matching environment-specific `X-Ambrosia-Internal` secret. They must never be called directly from browser code or treated as anonymous model APIs.
+The domain APIs call OpenAI directly with `OPENAI_API_KEY` injected from environment-specific Modal Secrets. There is no public or internal model endpoint.
 
 ## Local workflow
 
@@ -75,18 +75,17 @@ Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to M
 
 ### Modal runtime secret
 
-Create a Modal Secret named `ambrosia-runtime` in each Modal environment containing at minimum `DATABASE_URL`, `AUTH_SESSION_SECRET`, `MODAL_INTERNAL_AUTH_SECRET`, `DEMO_PRESENTER_SECRET` (synthetic demo environments only, including the current hosted Production alias), `APP_ENV`, `EXECUTION_PLATFORM=modal`, `DEMO_MODE`, `SESSION_COOKIE_SECURE`, `AUTO_CREATE_SCHEMA=false`, `AUTO_SEED=false`, `CORS_ORIGINS`, AI/provider credentials and adapter selections. Hosted Neon URLs require TLS. Keep a separate direct/migration URL in protected CI rather than application containers where feasible. Session signing and service-to-service inference authentication use distinct high-entropy values.
+Create a Modal Secret named `ambrosia-runtime` in each Modal environment containing at minimum `DATABASE_URL`, `AUTH_SESSION_SECRET`, `DEMO_PRESENTER_SECRET` (synthetic demo environments only, including the current hosted Production alias), `APP_ENV`, `EXECUTION_PLATFORM=modal`, `DEMO_MODE`, `SESSION_COOKIE_SECURE`, `AUTO_CREATE_SCHEMA=false`, `AUTO_SEED=false`, `CORS_ORIGINS`, and provider adapter selections. Create the narrower `ambrosia-openai` secret containing only `OPENAI_API_KEY`; attach it only to the domain API function. Hosted Neon URLs require TLS. Keep a separate direct/migration URL in protected CI rather than application containers where feasible.
 
 The demo Modal wrapper must declare the intended secret name and ASGI app; merely setting local shell variables does not inject them into a deployed container.
 
 The current `backend.modal_app` contract is deliberately small:
 
 - `modal.App("ambrosia-health-domain-api")` builds a Python 3.12 image from the locked backend project and mounts the `app` package;
-- `api` exposes the FastAPI application through `@modal.asgi_app()`;
-- `structured_inference` is an internal callable, while `structured_inference_webhook` is the HTTP boundary configured by `MODAL_AI_URL`; the HTTP boundary rejects a missing/wrong `X-Ambrosia-Internal` value, validates a named capability and response schema, and must use `MODAL_INTERNAL_AUTH_SECRET`, never the user-session signing secret;
-- `StructuredClinicalModel` runs `Qwen/Qwen2.5-0.5B-Instruct` on a T4, with model weights pinned to immutable revision `7ae557604adf67be50417f59c2c2f167def9a775`; generation is deterministic (`do_sample=false`) but remains probabilistic software, not a clinical authority;
-- the HTTP boundary verifies the versioned prompt hash, parses output into the capability schema, applies semantic constraints (including allowed-code, urgency, grounding, and uncertainty-routing checks), and labels a run live only when exact provider/model/prompt attestation is present;
-- cold start, timeout, resource pressure, malformed JSON, schema failure, semantic failure, missing provenance, or revision mismatch selects the deterministic `ambrosia-fixture-2026.1` fallback. Live and fallback outputs remain proposals subject to the same human gate;
+- `api` exposes the FastAPI application through `@modal.asgi_app()` and is the only web endpoint;
+- the domain API calls OpenAI `gpt-5.6-luna` through the Responses API with `reasoning.effort=low`, `store=false`, and no GPU or local model weights;
+- the AI application layer hashes the versioned prompt, parses output into the capability schema, applies semantic constraints (including allowed-code, urgency, grounding, and uncertainty-routing checks), and labels a run live only when exact provider/model/reasoning attestation is present;
+- timeout, provider failure, malformed JSON, schema failure, semantic failure, missing provenance, or model mismatch selects the deterministic `ambrosia-fixture-2026.1` fallback. Live and fallback outputs remain proposals subject to the same human gate;
 - `durable_workflow_poller` wakes every five minutes, reads due scheduled reminders and overdue tasks from Postgres, invokes the messaging simulator, and escalates task priority. Postgres remains authoritative. This is not yet a general lease/retry/dead-letter worker engine; that is a pilot gate.
 
 `backend/uv.lock` is the Modal SDK/CLI authority and currently resolves Modal 1.5.2. CI installs it with `uv sync --locked`; update `pyproject.toml` and the lockfile together, then revalidate decorators and `modal deploy -m backend.modal_app` before merging an SDK upgrade.
@@ -98,7 +97,7 @@ The current `backend.modal_app` contract is deliberately small:
 | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | Modal CLI deployment identity |
 | `NEON_DATABASE_URL_DIRECT` | protected migration job; environment-specific |
 | `MODAL_API_HEALTH_URL` | post-deploy authenticated/non-sensitive health endpoint URL |
-| `MODAL_AI_URL`, `MODAL_INTERNAL_AUTH_SECRET` | authenticated live-model attestation after deploy |
+| `OPENAI_API_KEY` | synchronized into `ambrosia-openai`; exact provider/model/reasoning contract attestation |
 | `PRESENTER_ACCESS_CODE` | protected hosted demo/E2E access retained only in platform secret stores and provisioner process memory |
 
 GitHub `staging` and `production` environments are provisioned and environment-specific; the latter carries the secrets for Modal `main` and the hosted Vercel production alias. Enforce required reviewers before treating it as a controlled release boundary. Restrict deployment credentials to service identities, rotate them, and never echo credential-bearing URLs or environment files. Native Vercel Git deployment does **not** require `VERCEL_TOKEN` in GitHub.
@@ -111,16 +110,16 @@ Authorized platform operators use one desired-state reconciliation entrypoint:
 ./scripts/provision-managed-infra.sh
 ```
 
-The script requires already authenticated `gh`, `neonctl`, Modal, and Vercel CLIs. It is safe to rerun against the registered resources: migrations, canonical seed loading, environment-variable replacement, secret creation, and deployments converge instead of accumulating resources. Each run intentionally generates new high-entropy presenter, session, and internal-auth secrets, so it is also a coordinated credential rotation.
+The script requires already authenticated `gh`, `neonctl`, Modal, and Vercel CLIs plus `OPENAI_API_KEY` from an authorized operator. It is safe to rerun against the registered resources: migrations, canonical seed loading, environment-variable replacement, secret creation, and deployments converge instead of accumulating resources. Each run intentionally generates new high-entropy presenter and session secrets, so it is also a coordinated credential rotation. Normal pushes need no operator input because GitHub synchronizes the stored OpenAI key into Modal before deployment.
 
 The script:
 
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
-3. replaces Modal runtime/internal secrets and matching GitHub environment secrets;
+3. replaces Modal runtime/OpenAI secrets and matching GitHub environment secrets;
 4. replaces Vercel Preview/Production API origins, public origin, and demo-test flag;
 5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
-6. calls each authenticated inference URL with a versioned prompt and fails closed unless headers identify `modal_open_weights`, the exact pinned Qwen revision, `fallback=false`, the exact prompt hash, and a schema-valid body;
+6. invokes the repository AI attestation through the Responses API and fails closed unless OpenAI returns `gpt-5.6-luna` with low reasoning and a schema- plus semantic-valid body;
 7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.
 
 `RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. Vercel masks sensitive values on environment pull, so the provisioner runs hosted E2E before discarding the generated presenter credential instead of copying that credential to disk. A passing hosted run leaves the canonical scenario at chapter one rather than leaving production in the completed test state.
@@ -140,7 +139,7 @@ Require repository checks before merge and validate authentication/role policy, 
 
 ## Modal development and deployment
 
-Official Modal CLI behavior: `modal serve` hot-reloads web functions and `modal deploy` creates/updates a persistent app. The managed `main` and `staging` environments contain `ambrosia-runtime` and the narrower `ambrosia-ai-internal` secret. The current repository wrapper is addressed by `MODAL_APP_MODULE`.
+Official Modal CLI behavior: `modal serve` hot-reloads web functions and `modal deploy` creates/updates a persistent app. The managed `main` and `staging` environments contain `ambrosia-runtime` and the narrower `ambrosia-openai` secret. The current repository wrapper is addressed by `MODAL_APP_MODULE`.
 
 ```bash
 # Authenticates the developer CLI once; do not use personal credentials in CI.
@@ -154,11 +153,11 @@ MODAL_ENVIRONMENT=main make modal-deploy
 MODAL_ENVIRONMENT=staging make modal-deploy
 ```
 
-Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets, preserve API/inference pairings, update Vercel bindings, and attest both managed environments. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
+Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets, update Vercel bindings, and attest both managed environments. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
 
-The domain API and GPU inference use Modal's scale-to-zero defaults. A cold start may select the visible deterministic inference fallback; live and fallback proposals retain the same schema validation and clinician approval gate.
+The CPU-only domain API uses Modal's scale-to-zero defaults. OpenAI timeout or provider failure selects the visible deterministic inference fallback; live and fallback proposals retain the same schema validation and clinician approval gate.
 
-`.github/workflows/modal-deploy.yml` performs this gate independently for Modal `main` and `staging`: frozen-migration checksum → install/check/test → Neon migration → tagged deploy → API/database health → authenticated live-model invocation and exact provenance/schema attestation. Every repository `main` push and manual dispatch reconciles both environments; Vercel production uses Modal `main`, while previews use `staging`. CI uses the installed-CLI-compatible form `modal deploy -m <module> --env <environment> --tag <sha>`.
+`.github/workflows/modal-deploy.yml` performs this gate independently for Modal `main` and `staging`: frozen-migration checksum → install/check/test → Neon migration → exact OpenAI model/reasoning/schema attestation → OpenAI-secret synchronization → tagged deploy → API/database/AI-configuration health. Every repository `main` push and manual dispatch reconciles both environments; Vercel production uses Modal `main`, while previews use `staging`. CI uses the installed-CLI-compatible form `modal deploy -m <module> --env <environment> --tag <sha>`.
 
 ## Release ordering
 
@@ -205,6 +204,6 @@ Record deploy SHA, Vercel URL, Modal app/tag, migration revision, Neon branch, s
 
 ## Integration-sensitive commands
 
-The repository command contract is `ambrosia-db migrate|seed|reset|verify`, Uvicorn import `app.main:app`, Modal module `backend.modal_app`, backend readiness `/api/health`, presenter health `/api/demo/health`, and web `lint|typecheck|test|build|e2e` scripts. After any topology, project, branch, endpoint, secret-name, or model-revision change, update the registry and reconciliation script together and rerun the full attestation rather than adding ad hoc alternatives.
+The repository command contract is `ambrosia-db migrate|seed|reset|verify`, `ambrosia-ai-attest`, Uvicorn import `app.main:app`, Modal module `backend.modal_app`, backend readiness `/api/health`, presenter health `/api/demo/health`, and web `lint|typecheck|test|build|e2e` scripts. After any topology, project, branch, endpoint, secret-name, model, or reasoning change, update the registry and reconciliation script together and rerun the full attestation rather than adding ad hoc alternatives.
 
 References: [Vercel deployments](https://vercel.com/docs/deployments), [Vercel Git integration](https://vercel.com/docs/git), [Modal deploy CLI](https://modal.com/docs/cli/latest/deploy), [Modal development with `serve`](https://modal.com/docs/guide/developing-debugging), and [Modal ASGI web functions](https://modal.com/docs/guide/webhooks).

@@ -2,7 +2,7 @@
 
 Target: 10–12 minutes. The audience should leave with one idea: Ambrosia operates the complete dermatology practice through one connected clinical, patient-engagement and financial record.
 
-Every person, image, message, result, claim and dollar is synthetic. Say once at the start: “Core Ambrosia records and workflows are functional; external healthcare and payment networks are deterministic simulations; AI runs on a pinned open-weights model on Modal when its output and provenance validate, with a visibly labeled deterministic fallback.”
+Every person, image, message, result, claim and dollar is synthetic. Say once at the start: “Core Ambrosia records and workflows are functional; external healthcare and payment networks are deterministic simulations; AI uses OpenAI GPT-5.6 Luna with low reasoning when its output and provenance validate, with a visibly labeled deterministic fallback.”
 
 Canonical personas: Sarah Mitchell (patient), Dr. Maya Chen (provider), Jordan Lee (clinical coordinator), Priya Shah (RCM specialist), and Alex Morgan (MSO owner).
 
@@ -58,7 +58,7 @@ During chapter 6, emphasize the record boundary: AI proposed a bundle; the clini
 - **Reset** targets only the canonical synthetic organization and restores a known seed version.
 - **Advance time** moves the scenario clock and evaluates due durable events; it does not change the computer clock.
 - **Pathology arrival / claim response** invoke idempotent provider adapters and normal domain commands.
-- **Model indicator** discloses live Modal inference versus deterministic fallback.
+- **Model indicator** discloses live OpenAI inference versus deterministic fallback.
 - **Health** confirms API/database/seed/workflow state before the audience arrives.
 
 Presenter controls must be absent in normal product mode. Never demonstrate them in an environment connected to real data/providers.

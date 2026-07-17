@@ -1,6 +1,6 @@
 # Production-readiness backlog
 
-The current release is synthetic-only. The managed Vercel site, Neon `main` branch, Modal `production` environment, and live pinned demo model do **not** close a real-world production gate. “P0” items are hard gates before any real patient, clinical, billing, or payment data enters the system. Completion requires linked evidence—contract, test report, runbook, configuration export, restore exercise—not a checkbox based on code review alone.
+The current release is synthetic-only. The managed Vercel site, Neon `main` branch, Modal `main` environment, and configured OpenAI demo model do **not** close a real-world production gate. “P0” items are hard gates before any real patient, clinical, billing, or payment data enters the system. Completion requires linked evidence—contract, test report, runbook, configuration export, restore exercise—not a checkbox based on code review alone.
 
 ## P0 — before real data or a live integration
 
@@ -75,7 +75,7 @@ Minimum go/no-go review: product, clinical safety, privacy, security, engineerin
 | Pre-seeded signed persona session | production IdP, MFA, identity proofing, provisioning, scoped role/delegate policy |
 | Presenter role switch/reset/time advance | disabled/unroutable in production; controlled admin tooling built separately if needed |
 | Deterministic AI fallback fixtures | retained only as test fixtures; production failure yields safe queue/manual workflow, never fabricated patient output |
-| Pinned `Qwen/Qwen2.5-0.5B-Instruct` demo inference on Modal T4 with schema/semantic validation | capability-specific clinical evaluation and risk thresholds; approved model/vendor terms, retention/training controls, minimum-necessary transport, monitoring/drift/change control, human-factors validation, and a safe manual outage path; exact provider/model labels remain mandatory |
+| OpenAI `gpt-5.6-luna` demo inference with low reasoning, `store=false`, and schema/semantic validation | capability-specific clinical evaluation and risk thresholds; approved model/vendor terms, retention/training controls, minimum-necessary transport, monitoring/drift/change control, human-factors validation, and a safe manual outage path; exact provider/model/reasoning labels remain mandatory |
 | Simulated eligibility/claims/remit/SMS/eRx/pathology/payment | certified live adapter plus authenticated callbacks, reconciliation, monitoring and contracts |
 | Canonical public synthetic assets | private authorized patient file pipeline with scanning, consent, retention and deletion |
 | SQLite/Docker local stores and current synthetic Neon `main`/`staging`/`preview` branches | real-data-approved Neon account/project with least privilege, pooling, PITR, tested restore, residency/retention controls and migration governance |

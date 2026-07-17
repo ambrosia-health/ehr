@@ -13,10 +13,10 @@ GITHUB_REPOSITORY="ambrosia-health/ehr"
 VERCEL_ORG_ID="team_NWSCGbaTw7YBdtMacOBB2f2D"
 VERCEL_PROJECT_ID="prj_ad1AsXV5muySOAyBsxMgcKAj1SVa"
 MAIN_API="https://kshr-ai--ambrosia-health-domain-api-api.modal.run"
-MAIN_AI="https://kshr-ai--structured-inference.modal.run"
 STAGING_API="https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run"
-STAGING_AI="https://kshr-ai-staging--structured-inference.modal.run"
 WEB_ORIGIN="https://ambrosia-ehr.vercel.app"
+
+: "${OPENAI_API_KEY:?OPENAI_API_KEY must be supplied by an authorized platform operator}"
 
 for command in gh neonctl node npm openssl uv; do
   command -v "$command" >/dev/null || {
@@ -29,9 +29,7 @@ make backend-install web-install >/dev/null
 
 presenter="$(openssl rand -hex 24)"
 main_session="$(openssl rand -hex 32)"
-main_internal="$(openssl rand -hex 32)"
 staging_session="$(openssl rand -hex 32)"
-staging_internal="$(openssl rand -hex 32)"
 
 neon_url() {
   local branch="$1"
@@ -74,7 +72,7 @@ common_runtime=(
   "AUTO_CREATE_SCHEMA=false"
   "AUTO_SEED=false"
   "CORS_ORIGINS=[\"$WEB_ORIGIN\"]"
-  "AI_REQUEST_TIMEOUT_SECONDS=8"
+  "AI_REQUEST_TIMEOUT_SECONDS=60"
   "ELIGIBILITY_PROVIDER=simulated"
   "CLEARINGHOUSE_PROVIDER=simulated"
   "REMITTANCE_PROVIDER=simulated"
@@ -88,31 +86,25 @@ common_runtime=(
   "APP_ENV=production" \
   "DATABASE_URL=$main_db" \
   "AUTH_SESSION_SECRET=$main_session" \
-  "MODAL_INTERNAL_AUTH_SECRET=$main_internal" \
-  "MODAL_AI_URL=$MAIN_AI" \
   "${common_runtime[@]}" >/dev/null
-.venv/bin/modal secret create ambrosia-ai-internal --env main --force \
-  "MODAL_INTERNAL_AUTH_SECRET=$main_internal" >/dev/null
+.venv/bin/modal secret create ambrosia-openai --env main --force \
+  "OPENAI_API_KEY=$OPENAI_API_KEY" >/dev/null
 .venv/bin/modal secret create ambrosia-runtime --env staging --force \
   "APP_ENV=staging" \
   "DATABASE_URL=$staging_db" \
   "AUTH_SESSION_SECRET=$staging_session" \
-  "MODAL_INTERNAL_AUTH_SECRET=$staging_internal" \
-  "MODAL_AI_URL=$STAGING_AI" \
   "${common_runtime[@]}" >/dev/null
-.venv/bin/modal secret create ambrosia-ai-internal --env staging --force \
-  "MODAL_INTERNAL_AUTH_SECRET=$staging_internal" >/dev/null
+.venv/bin/modal secret create ambrosia-openai --env staging --force \
+  "OPENAI_API_KEY=$OPENAI_API_KEY" >/dev/null
 
-printf '%s' "$main_internal" | gh secret set MODAL_INTERNAL_AUTH_SECRET --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$MAIN_AI" | gh secret set MODAL_AI_URL --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$MAIN_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$main_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$staging_internal" | gh secret set MODAL_INTERNAL_AUTH_SECRET --env staging -R "$GITHUB_REPOSITORY"
-printf '%s' "$STAGING_AI" | gh secret set MODAL_AI_URL --env staging -R "$GITHUB_REPOSITORY"
+printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$STAGING_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$staging_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env staging -R "$GITHUB_REPOSITORY"
+printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env staging -R "$GITHUB_REPOSITORY"
 echo "Modal main/staging and GitHub production/staging secrets are synchronized."
 
 export VERCEL_ORG_ID VERCEL_PROJECT_ID
@@ -128,56 +120,20 @@ for target in production preview development; do
 done
 echo "Vercel environment bindings are synchronized."
 
-prompt='Ambrosia chart_summary prompt. Use minimum necessary context and return schema-valid JSON.'
-prompt_hash="$(printf '%s' "$prompt" | shasum -a 256 | cut -d ' ' -f 1)"
-payload="$(
-  PROMPT="$prompt" PROMPT_HASH="$prompt_hash" python3 -c \
-    'import json, os; print(json.dumps({"capability":"chart_summary","context":{"patientName":"Synthetic readiness patient"},"prompt":{"version":"2026.1","template":os.environ["PROMPT"],"sha256":os.environ["PROMPT_HASH"]}}))'
-)"
-
 deploy_and_attest() {
   local environment="$1"
   local api_url="$2"
-  local ai_url="$3"
-  local internal_secret="$4"
-  local headers
-  local body
-  headers="$(mktemp)"
-  body="$(mktemp)"
 
   .venv/bin/modal deploy -m backend.modal_app --env "$environment"
   curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 3 \
     --max-time 30 "$api_url/api/health" |
-    python3 -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy", data'
-
-  for attempt in 1 2; do
-    : >"$headers"
-    : >"$body"
-    curl --fail --silent --show-error --max-time 175 \
-      --dump-header "$headers" \
-      --output "$body" \
-      -H "X-Ambrosia-Internal: $internal_secret" \
-      -H 'Content-Type: application/json' \
-      --data "$payload" \
-      "$ai_url" || true
-    if grep -Fqi 'x-ambrosia-ai-provider: modal_open_weights' "$headers" && \
-      grep -Fqi 'x-ambrosia-ai-fallback: false' "$headers" && \
-      grep -Fqi 'x-ambrosia-ai-model: Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775' "$headers" && \
-      grep -Fqi "x-ambrosia-ai-prompt-hash: $prompt_hash" "$headers" && \
-      BODY="$body" python3 -c 'import json, os; data=json.load(open(os.environ["BODY"])); assert data.get("headline") and data.get("activeConcerns")'; then
-      echo "$environment API, Neon connection, live-model provenance, and output schema are attested."
-      return 0
-    fi
-    echo "$environment live-model attempt $attempt returned fallback or incomplete attestation."
-  done
-
-  echo "$environment live-model attestation failed" >&2
-  grep -i '^x-ambrosia-ai-' "$headers" >&2 || true
-  return 1
+    python3 -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy" and data.get("ai")=="openai_configured", data'
+  .venv/bin/ambrosia-ai-attest
+  echo "$environment API, Neon connection, and OpenAI model contract are attested."
 }
 
-deploy_and_attest main "$MAIN_API" "$MAIN_AI" "$main_internal"
-deploy_and_attest staging "$STAGING_API" "$STAGING_AI" "$staging_internal"
+deploy_and_attest main "$MAIN_API"
+deploy_and_attest staging "$STAGING_API"
 
 if [[ "${RUN_HOSTED_E2E:-1}" == "1" ]]; then
   (

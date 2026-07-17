@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from app import ai
@@ -77,12 +79,12 @@ async def test_invalid_live_schema_falls_back_without_breaking_workflow(monkeypa
     assert persisted.error_message
 
 
-async def test_attested_modal_model_output_is_recorded_as_live(monkeypatch) -> None:
+async def test_attested_openai_model_output_is_recorded_as_live(monkeypatch) -> None:
     async def live_model(capability: str, context: dict, **_prompt):
         return (
             deterministic_output(capability, context),
-            "modal_open_weights",
-            "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775",
+            "openai",
+            "gpt-5.6-luna",
             False,
             None,
         )
@@ -105,14 +107,14 @@ async def test_attested_modal_model_output_is_recorded_as_live(monkeypatch) -> N
             )
         )
     assert output.headline.startswith("Sarah Mitchell")
-    assert run.provider == "modal_open_weights"
-    assert run.model.endswith("@7ae557604adf67be50417f59c2c2f167def9a775")
+    assert run.provider == "openai"
+    assert run.model == "gpt-5.6-luna"
     assert run.fallback_used is False
     assert run.error_message is None
     assert scenario and scenario.fallback_indicator is False
 
 
-async def test_missing_remote_attestation_is_never_recorded_as_live(monkeypatch) -> None:
+async def test_openai_model_mismatch_is_never_recorded_as_live(monkeypatch) -> None:
     class FakeClient:
         async def __aenter__(self):
             return self
@@ -124,28 +126,105 @@ async def test_missing_remote_attestation_is_never_recorded_as_live(monkeypatch)
             return httpx.Response(
                 200,
                 request=httpx.Request("POST", url),
-                headers={"X-Ambrosia-AI-Fallback": "false"},
-                json=deterministic_output("chart_summary", {"patientName": "Sarah Mitchell"}),
+                json={
+                    "status": "completed",
+                    "model": "unexpected-model",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        deterministic_output(
+                                            "chart_summary",
+                                            {"patientName": "Sarah Mitchell"},
+                                        )
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                },
             )
 
     monkeypatch.setattr(
         ai,
         "get_settings",
         lambda: SimpleNamespace(
-            modal_ai_url="https://modal.invalid/inference",
-            modal_internal_auth_secret="test-secret",
+            openai_api_key="test-openai-key",
             ai_timeout_seconds=1,
         ),
     )
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: FakeClient())
-    _output, provider, model, fallback_used, error = await ai._live_inference(
+    with pytest.raises(RuntimeError, match="openai_model_attestation_mismatch"):
+        await ai._live_inference(
+            "chart_summary",
+            {"patientName": "Sarah Mitchell"},
+            prompt_version="2026.1",
+            prompt_template="Return schema-valid JSON.",
+            prompt_hash="0" * 64,
+        )
+
+
+async def test_openai_request_uses_luna_low_reasoning_without_storage(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={
+                    "status": "completed",
+                    "model": "gpt-5.6-luna",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        deterministic_output(
+                                            "chart_summary",
+                                            {"patientName": "Sarah Mitchell"},
+                                        )
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+    monkeypatch.setattr(
+        ai,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="test-openai-key", ai_timeout_seconds=1),
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    output, provider, model, fallback_used, error = await ai._live_inference(
         "chart_summary",
         {"patientName": "Sarah Mitchell"},
         prompt_version="2026.1",
         prompt_template="Return schema-valid JSON.",
         prompt_hash="0" * 64,
     )
-    assert provider == "modal_unverified_adapter"
-    assert model == "unreported"
-    assert fallback_used is True
-    assert error == "remote_model_attestation_missing_or_untrusted"
+    assert captured["url"] == "https://api.openai.com/v1/responses"
+    assert captured["json"]["model"] == "gpt-5.6-luna"
+    assert captured["json"]["reasoning"] == {"effort": "low"}
+    assert captured["json"]["store"] is False
+    assert captured["json"]["text"]["format"]["type"] == "json_schema"
+    assert provider == "openai"
+    assert model == "gpt-5.6-luna"
+    assert fallback_used is False
+    assert error is None
+    assert output["headline"].startswith("Sarah Mitchell")

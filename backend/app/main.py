@@ -17,7 +17,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .ai import CAPABILITIES, deterministic_output, run_ai
+from .ai import CAPABILITIES, run_ai
 from .clock import domain_now
 from .config import Settings, get_settings
 from .database import SessionLocal, create_schema, get_session
@@ -290,26 +290,11 @@ async def health(session: Session) -> dict[str, Any]:
         "status": "healthy" if database == "healthy" else "degraded",
         "service": "ambrosia-domain-api",
         "database": database,
+        "ai": "openai_configured" if get_settings().openai_api_key else "fallback_only",
         "environment": get_settings().environment,
         "demo_mode": get_settings().demo_mode,
         "time": utcnow(),
     }
-
-
-@app.post("/api/internal/ai/inference", include_in_schema=False)
-async def internal_structured_inference(
-    request: Request,
-    runtime: Annotated[Settings, Depends(get_settings)],
-) -> dict[str, Any]:
-    supplied_secret = request.headers.get("X-Ambrosia-Internal", "")
-    if not hmac.compare_digest(supplied_secret, runtime.modal_internal_auth_secret):
-        raise HTTPException(status_code=404, detail="Not found")
-    payload = await request.json()
-    capability = payload.get("capability")
-    context = payload.get("context", {})
-    if capability not in CAPABILITIES or not isinstance(context, dict):
-        raise HTTPException(status_code=422, detail="Invalid structured inference request")
-    return deterministic_output(capability, context)
 
 
 @app.get("/api/auth/personas")
@@ -2950,8 +2935,8 @@ async def presenter_health(
         "runtime": runtime.execution_platform,
         "database": "sqlite_local" if runtime.is_sqlite else "neon_postgres",
         "ai_provider": (
-            "modal_structured_inference"
-            if runtime.modal_ai_url
+            "openai"
+            if runtime.openai_api_key
             else "local_deterministic_fallback"
         ),
     }

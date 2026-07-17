@@ -17,14 +17,14 @@ from .models import AIInput, AIOutput, AIRun, DemoScenario, PromptVersion, Prove
 from .schemas import AI_OUTPUT_SCHEMAS, APIModel
 
 CAPABILITIES = tuple(AI_OUTPUT_SCHEMAS)
-ATTESTED_MODAL_PROVIDER = "modal_open_weights"
-ATTESTED_MODAL_MODEL = (
-    "Qwen/Qwen2.5-0.5B-Instruct@7ae557604adf67be50417f59c2c2f167def9a775"
-)
+ATTESTED_AI_PROVIDER = "openai"
+ATTESTED_AI_MODEL = "gpt-5.6-luna"
+ATTESTED_AI_REASONING_EFFORT = "low"
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
 def deterministic_output(capability: str, context: dict[str, Any]) -> dict[str, Any]:
-    """Clinically conservative fixtures keep the demo available during model cold starts."""
+    """Clinically conservative fixtures keep the demo available during provider outages."""
 
     patient_name = context.get("patientName", "the patient")
     outputs: dict[str, dict[str, Any]] = {
@@ -135,43 +135,127 @@ async def _live_inference(
     prompt_hash: str,
 ) -> tuple[dict[str, Any], str, str, bool, str | None]:
     settings = get_settings()
-    if not settings.modal_ai_url:
-        raise RuntimeError("Modal AI URL is not configured")
+    if not settings.openai_api_key:
+        raise RuntimeError("OpenAI is not configured")
+    schema = AI_OUTPUT_SCHEMAS[capability]
+    conservative_reference = deterministic_output(capability, context)
+    developer_instruction = (
+        "You are a clinical documentation assistant operating only on synthetic demo data. "
+        "Return one JSON object and no prose. Follow the supplied output schema. "
+        "Do not invent diagnoses, medications, codes, or facts beyond the context and "
+        "conservative reference. Start from conservativeReference and preserve every "
+        "required key; change a value only when context explicitly supports a safer value. "
+        "Preserve uncertainty and route unsafe ambiguity to staff. "
+        f"Execute this versioned instruction: {prompt_template}"
+    )
+    model_input = {
+        "capability": capability,
+        "context": context,
+        "conservativeReference": conservative_reference,
+        "promptVersion": prompt_version,
+        "promptSha256": prompt_hash,
+    }
     async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
         response = await client.post(
-            settings.modal_ai_url,
+            OPENAI_RESPONSES_URL,
+            headers={
+                "Authorization": f"Bearer {settings.openai_api_key}",
+                "Content-Type": "application/json",
+            },
             json={
-                "capability": capability,
-                "context": context,
-                "prompt": {
-                    "version": prompt_version,
-                    "template": prompt_template,
-                    "sha256": prompt_hash,
+                "model": ATTESTED_AI_MODEL,
+                "reasoning": {"effort": ATTESTED_AI_REASONING_EFFORT},
+                "store": False,
+                "safety_identifier": "ambrosia-synthetic-demo",
+                "max_output_tokens": 2_500,
+                "input": [
+                    {"role": "developer", "content": developer_instruction},
+                    {
+                        "role": "user",
+                        "content": json.dumps(model_input, sort_keys=True, default=str),
+                    },
+                ],
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": f"ambrosia_{capability}",
+                        "schema": schema.model_json_schema(by_alias=True),
+                        # Dynamic-map capabilities require non-strict generation. The
+                        # Pydantic and semantic validators below remain authoritative.
+                        "strict": False,
+                    }
                 },
             },
-            headers={"X-Ambrosia-Internal": settings.modal_internal_auth_secret},
         )
         response.raise_for_status()
-        provider = response.headers.get("X-Ambrosia-AI-Provider", "modal_unverified_adapter")
-        model = response.headers.get("X-Ambrosia-AI-Model", "unreported")
-        returned_prompt_version = response.headers.get("X-Ambrosia-AI-Prompt-Version")
-        returned_prompt_hash = response.headers.get("X-Ambrosia-AI-Prompt-Hash")
-        declared_fallback = response.headers.get("X-Ambrosia-AI-Fallback", "true").lower()
-        live_attested = (
-            declared_fallback == "false"
-            and provider == ATTESTED_MODAL_PROVIDER
-            and model == ATTESTED_MODAL_MODEL
-            and returned_prompt_version == prompt_version
-            and returned_prompt_hash == prompt_hash
-        )
-        error = response.headers.get("X-Ambrosia-AI-Error-Class")
-        if not live_attested and not error:
-            error = (
-                "remote_inference_reported_fallback"
-                if declared_fallback == "true"
-                else "remote_model_attestation_missing_or_untrusted"
-            )
-        return response.json(), provider, model, not live_attested, error
+    response_body = response.json()
+    if response_body.get("status") != "completed":
+        raise RuntimeError("openai_response_incomplete")
+    model = response_body.get("model", "unreported")
+    if model != ATTESTED_AI_MODEL:
+        raise RuntimeError("openai_model_attestation_mismatch")
+    output_text = "".join(
+        content.get("text", "")
+        for item in response_body.get("output", [])
+        if item.get("type") == "message"
+        for content in item.get("content", [])
+        if content.get("type") == "output_text"
+    )
+    if not output_text:
+        raise RuntimeError("openai_output_text_missing")
+    raw = json.loads(output_text)
+    if not isinstance(raw, dict):
+        raise ValueError("OpenAI output must be a JSON object")
+    validated = _validated_model_output(
+        capability,
+        context,
+        raw,
+        conservative_reference,
+    )
+    return (
+        validated.model_dump(mode="json", by_alias=True),
+        ATTESTED_AI_PROVIDER,
+        model,
+        False,
+        None,
+    )
+
+
+def _validated_model_output(
+    capability: str,
+    context: dict[str, Any],
+    raw: dict[str, Any],
+    conservative_reference: dict[str, Any],
+) -> APIModel:
+    schema = AI_OUTPUT_SCHEMAS[capability]
+    output = schema.model_validate(raw)
+    serialized = output.model_dump(mode="json", by_alias=True)
+    if (
+        capability == "patient_message"
+        and context.get("uncertain")
+        and not serialized["routeToStaff"]
+    ):
+        raise ValueError("Uncertain patient messages must route to staff")
+    if capability == "coding_suggestions":
+        allowed_codes = {
+            (item["system"], item["code"])
+            for item in conservative_reference["suggestions"]
+        }
+        proposed_codes = {
+            (item["system"], item["code"]) for item in serialized["suggestions"]
+        }
+        if not proposed_codes <= allowed_codes:
+            raise ValueError("Model proposed an unsupported billing code")
+    if (
+        capability == "pathology_summary"
+        and serialized["urgency"] != conservative_reference["urgency"]
+    ):
+        raise ValueError("Model urgency conflicts with the source result")
+    if capability == "patient_message":
+        approved_sources = set(conservative_reference["source_instructions"])
+        if not set(serialized["sourceInstructions"]) <= approved_sources:
+            raise ValueError("Patient message cites an unapproved instruction")
+    return output
 
 
 async def run_ai(

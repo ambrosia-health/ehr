@@ -880,7 +880,7 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
         started_at=DEMO_NOW - timedelta(hours=2),
         completed_at=DEMO_NOW - timedelta(hours=2),
         latency_ms=2,
-        error_message="Modal inference unavailable during canonical seed",
+        error_message="OpenAI unavailable during canonical seed",
     )
     summary_json = {
         "headline": "Changing pigmented lesion on the left posterior shoulder",
@@ -938,7 +938,7 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
             started_at=started_at,
             completed_at=started_at,
             latency_ms=2,
-            error_message="Modal inference unavailable during canonical seed",
+            error_message="OpenAI unavailable during canonical seed",
         )
         session.add(run)
         session.add_all(

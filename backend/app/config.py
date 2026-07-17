@@ -53,12 +53,8 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
-    modal_ai_url: str | None = None
+    openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     execution_platform: str = Field(default="local", validation_alias="EXECUTION_PLATFORM")
-    modal_internal_auth_secret: str = Field(
-        default="local-modal-internal-secret-change-before-deploy",
-        validation_alias="MODAL_INTERNAL_AUTH_SECRET",
-    )
     ai_timeout_seconds: float = Field(
         default=8.0,
         validation_alias=AliasChoices("AI_REQUEST_TIMEOUT_SECONDS", "AI_TIMEOUT_SECONDS"),
@@ -104,14 +100,6 @@ class Settings(BaseSettings):
                 raise ValueError("AUTH_SESSION_SECRET must be set in production")
             if self.presenter_key == "ambrosia-demo":
                 raise ValueError("DEMO_PRESENTER_SECRET must be set in production")
-            if (
-                self.modal_ai_url
-                and self.modal_internal_auth_secret
-                == "local-modal-internal-secret-change-before-deploy"
-            ):
-                raise ValueError(
-                    "MODAL_INTERNAL_AUTH_SECRET must be non-default when MODAL_AI_URL is configured"
-                )
             if not self.secure_cookies:
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
             if self.session_cookie_name == "ambrosia_session":

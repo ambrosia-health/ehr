@@ -30,9 +30,8 @@ os.environ["AUTO_CREATE_SCHEMA"] = "false"
 os.environ["AUTO_SEED"] = "false"
 os.environ["AUTH_SESSION_SECRET"] = "test-session-secret-not-for-production"
 os.environ["DEMO_PRESENTER_SECRET"] = "test-presenter-code"
-os.environ["MODAL_INTERNAL_AUTH_SECRET"] = "test-modal-internal-secret"
-# Unit/contract tests must never inherit or call a deployed inference endpoint.
-os.environ.pop("MODAL_AI_URL", None)
+# Unit/contract tests must never inherit or call OpenAI.
+os.environ.pop("OPENAI_API_KEY", None)
 os.environ["EXECUTION_PLATFORM"] = "local"
 
 from app.database import SessionLocal, create_schema, engine  # noqa: E402

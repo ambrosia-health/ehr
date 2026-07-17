@@ -20,9 +20,9 @@ The matrix is the acceptance contract, not proof by itself. A capability is demo
 | Eligibility | Functional request/result/benefit records and estimate input | **Deterministic payer simulator** | retry idempotency; request/response provenance |
 | Patient estimate | Functional calculated, versioned estimate | Uses simulated benefits/fee assumptions | line totals and patient amount reconcile |
 | Command center | Functional queries from current records | None | seeded queue counts equal source-record query results |
-| AI pre-visit summary | Functional run/output/proposal/provenance | Authenticated pinned Qwen model on Modal when schema/semantics/provenance pass; deterministic fallback otherwise | hosted live-model attestation, timeout/invalid-output fallback test, honest run label and source attribution |
+| AI pre-visit summary | Functional run/output/proposal/provenance | Authenticated OpenAI GPT-5.6 Luna with low reasoning when schema/semantics/provenance pass; deterministic fallback otherwise | hosted provider/model/reasoning attestation, timeout/invalid-output fallback test, honest run label and source attribution |
 | Encounter state and ambient transcript | Durable encounter/transcript linkage and state | Transcript may be seeded; live speech engine not required | state transition and restart test |
-| Structured note drafting | Versioned draft and AI proposal | Authenticated pinned Qwen model on Modal when validated; deterministic local/remote fallback otherwise | schema/semantic validation, fallback labeling, edit trail, approval visibility |
+| Structured note drafting | Versioned draft and AI proposal | Authenticated OpenAI GPT-5.6 Luna with low reasoning when validated; deterministic local/remote fallback otherwise | schema/semantic validation, fallback labeling, edit trail, approval visibility |
 | Signed notes and amendments | Immutable signed snapshot; append-only amendment | None | mutation fails; original/hash/version chronology preserved |
 | Body map and lesion timeline | Persistent lesion, coded body site, observations and comparisons | Synthetic image assets | same lesion spans encounters; ordered observation history |
 | Biopsy review-and-complete | Atomic approved bundle creates note/procedure/specimen/order/claim/tasks/message/audit/provenance | Pathology transmission simulated | transaction rollback and command idempotency tests |
@@ -45,11 +45,11 @@ The matrix is the acceptance contract, not proof by itself. A capability is demo
 
 Each named capability uses the same interface and validated output schema in both modes.
 
-Managed staging and production use authenticated `MODAL_AI_URL` endpoints backed by `Qwen/Qwen2.5-0.5B-Instruct` on a Modal T4. Model weights are pinned to revision `7ae557604adf67be50417f59c2c2f167def9a775`; the deployment attestation rejects any different or missing model identity. A live response records provider `modal_open_weights`, the exact model revision and prompt hash, and `fallback_used=false` only after JSON-schema plus capability-specific semantic validation.
+Managed staging and production call OpenAI `gpt-5.6-luna` directly from the Modal domain API through the Responses API with `reasoning.effort=low` and `store=false`. There is no GPU or separate model endpoint. Deployment attestation rejects a different provider, model, reasoning effort, or prompt identity. A live response records provider `openai`, model `gpt-5.6-luna`, the prompt hash, and `fallback_used=false` only after JSON-schema plus capability-specific semantic validation.
 
-The model has no authority merely because it executed. Coding proposals cannot introduce codes absent from the conservative evidence set; pathology urgency cannot contradict the source result; patient drafts cannot cite unapproved instructions; uncertain messages must route to staff. Any cold start, timeout, exception, malformed JSON, schema violation, semantic violation, missing attestation, or revision mismatch returns the matching `ambrosia-fixture-2026.1` output, records `modal_deterministic_fallback`/`fallback_used=true`, and retains the same review requirement. Local zero-credential development uses this deterministic mode directly.
+The model has no authority merely because it executed. Coding proposals cannot introduce codes absent from the conservative evidence set; pathology urgency cannot contradict the source result; patient drafts cannot cite unapproved instructions; uncertain messages must route to staff. Any timeout, provider exception, malformed JSON, schema violation, semantic violation, missing attestation, or model/reasoning mismatch returns the matching `ambrosia-fixture-2026.1` output, records `openai_deterministic_fallback`/`fallback_used=true`, and retains the same review requirement. Local zero-credential development uses this deterministic mode directly.
 
-| Capability | Validated Modal model path | Deterministic resilience path | Human gate |
+| Capability | Validated OpenAI path | Deterministic resilience path | Human gate |
 |---|---|---|---|
 | `chart_summary` | minimum-necessary chart context → structured summary; deployment-attested capability | Sarah/fixture-keyed structured summary | clinician verifies before clinical reliance |
 | `ambient_note` | transcript context → structured draft | transcript fixture → same schema | clinician edits and signs an exact version |
@@ -76,6 +76,6 @@ Replacing a simulator must not change clinical/RCM tables or let provider callba
 
 ## Presenter disclosure
 
-Use this exact framing: “Patient, clinical, operational and financial workflows are functional against Ambrosia’s domain model. External payer, clearinghouse, remittance, messaging, prescribing, pathology transmission and settlement networks are deterministic simulations. AI runs on a pinned open-weights model on Modal when its output and provenance validate, with a visibly labeled deterministic fallback. Every person and record shown is synthetic.”
+Use this exact framing: “Patient, clinical, operational and financial workflows are functional against Ambrosia’s domain model. External payer, clearinghouse, remittance, messaging, prescribing, pathology transmission and settlement networks are deterministic simulations. AI uses OpenAI GPT-5.6 Luna with low reasoning when its output and provenance validate, with a visibly labeled deterministic fallback. Every person and record shown is synthetic.”
 
 Do not say a claim was sent, a text was delivered, a prescription was transmitted, a lab posted a result, money moved, or an AI model was live unless the UI’s adapter/run evidence proves that specific fact. Say “simulated submission,” “simulated delivery,” or “fallback-generated” as applicable.

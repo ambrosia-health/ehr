@@ -40,7 +40,7 @@ Local E2E skips when those credentials are absent; CI fails explicitly so the cr
 
 The managed Vercel project is `ambrosia-ehr` (`prj_ad1AsXV5muySOAyBsxMgcKAj1SVa`), its Root Directory is `apps/web`, and its canonical synthetic-demo site is [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Native Git integration with `ambrosia-health/ehr` creates branch/PR previews and deploys `main`; no `VERCEL_TOKEN` or manual per-contributor environment setup is required. `.github/workflows/vercel-preview.yml` verifies pull requests and smoke-tests successful non-production deployment events rather than creating a second CLI deployment.
 
-Managed Preview `AMBROSIA_API_ORIGIN` targets the synthetic Modal staging API; Production targets the synthetic Modal production API. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) is the authorized reconciliation path for these bindings and the corresponding platform secrets. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
+Managed Preview `AMBROSIA_API_ORIGIN` targets the synthetic Modal staging API; Production targets the synthetic Modal main API. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) is the authorized reconciliation path for these bindings and the corresponding platform secrets. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
 
 Never set `NEXT_PUBLIC_DEMO_TEST_MODE=true` in production. Presenter capability comes only from the signed HTTP-only session returned by the domain API.
 

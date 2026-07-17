@@ -3406,14 +3406,14 @@ async def demo_bootstrap(
             {
                 "id": "ai",
                 "service": (
-                    "Modal deterministic inference adapter"
-                    if runtime.modal_ai_url
+                    "OpenAI GPT-5.6 Luna"
+                    if runtime.openai_api_key
                     else "Local deterministic inference fixtures"
                 ),
                 "status": "degraded" if scenario.fallback_indicator else "healthy",
                 "latency": (
-                    "Deterministic adapter configured"
-                    if runtime.modal_ai_url
+                    "Low reasoning configured"
+                    if runtime.openai_api_key
                     else "Local fallback active"
                 ),
             },

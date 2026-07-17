@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 ambrosia-db = "app.cli:main"
+ambrosia-ai-attest = "app.ai_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
