@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { useDemoBootstrap } from "@/lib/api/hooks";
+import { demoBootstrapQueryKey, useDemoBootstrap } from "@/lib/api/hooks";
 import { apiAction, endpoints } from "@/lib/api/client";
 import type { Persona } from "@/lib/api/types";
 import { formatInTimeZone } from "@/lib/date";
@@ -81,7 +81,7 @@ export function PresenterConsole() {
     try {
       await apiAction(endpoints.switchPersona, { persona: chapter.persona });
       setPersona(chapter.persona);
-      await queryClient.invalidateQueries({ queryKey: ["demo-bootstrap"] });
+      queryClient.removeQueries({ queryKey: demoBootstrapQueryKey });
       router.push(chapter.href);
     } catch (chapterSwitchError) {
       setChapterError(
