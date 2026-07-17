@@ -71,7 +71,7 @@ make reset
 | `NEXT_PUBLIC_DEMO_TEST_MODE` | public | Keep `false` for local, preview, production and integrated E2E. It may be `true` only in an isolated frontend/API harness whose backend is explicitly `APP_ENV=test`; that harness alone may send `X-Demo-Persona`. |
 | `BLOB_READ_WRITE_TOKEN` | server only, if uploads enabled | Private synthetic upload adapter. Do not expose to the browser. |
 
-Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to Modal, preserving the browser's session request. Modal authenticates and authorizes it, assigns or returns `X-Request-ID`, and emits private/no-store headers; Next adds matching no-store and `Vary: Cookie` headers. This demo does not implement a custom route-handler proxy or a header/body allowlist. Explicit forwarding rules and body/time limits are production gates if the rewrite is replaced by a proxy.
+Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to Modal, preserving the browser's session request. Modal authenticates and authorizes it, assigns or returns `X-Request-ID`, and emits private/no-store headers; Next adds matching no-store and `Vary: Cookie` headers. A lightweight Next.js request Proxy performs only an optimistic product-route cookie check, keeping presentation routes static and prefetchable; Modal remains the authorization boundary for every read and mutation. This demo does not implement a custom route-handler proxy or a header/body allowlist. Explicit forwarding rules and body/time limits are production gates if the API rewrite is replaced by an application proxy.
 
 ### Modal runtime secret
 
