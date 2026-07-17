@@ -4,8 +4,13 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   async rewrites() {
-    const configuredOrigin = process.env.AMBROSIA_API_ORIGIN;
-    const apiOrigin = (configuredOrigin ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined))?.replace(/\/$/, "");
+    const configuredOrigin = process.env.AMBROSIA_API_ORIGIN?.trim() || undefined;
+    const managedVercelOrigin = process.env.VERCEL_ENV === "production"
+      ? "https://kshr-ai--ambrosia-health-domain-api-api.modal.run"
+      : process.env.VERCEL_ENV === "preview"
+        ? "https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run"
+        : undefined;
+    const apiOrigin = (configuredOrigin ?? managedVercelOrigin ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined))?.replace(/\/$/, "");
     if (!apiOrigin) {
       throw new Error("AMBROSIA_API_ORIGIN is required for production builds and deployments.");
     }
