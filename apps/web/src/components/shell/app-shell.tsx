@@ -10,14 +10,14 @@ import {
   HeartPulse,
   Menu,
   MessageSquareText,
+  Search,
   ShieldCheck,
   Sparkles,
   Stethoscope,
-  UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState, type PropsWithChildren } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type FormEvent, type PropsWithChildren } from "react";
 
 import { PresenterRail } from "@/components/presenter/presenter-rail";
 import { StatusBadge } from "@/components/product/page-elements";
@@ -33,6 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -41,6 +42,7 @@ import { ApiError, apiAction, apiRequest, endpoints } from "@/lib/api/client";
 import type { Persona } from "@/lib/api/types";
 import type { DemoBootstrap } from "@/lib/api/types";
 import { replaceWithLogin } from "@/lib/auth/session-lifecycle";
+import { formatInTimeZone } from "@/lib/date";
 import { cn } from "@/lib/utils";
 
 const navigation = [
@@ -48,7 +50,6 @@ const navigation = [
     label: "Care delivery",
     items: [
       { href: "/command-center", label: "Command center", icon: CalendarDays, roles: ["provider", "clinical", "owner"] },
-      { href: "/patients/sarah-mitchell", label: "Sarah Mitchell", icon: UserRound, roles: ["provider", "clinical"] },
       { href: "/encounters/sarah-biopsy", label: "Encounter", icon: Stethoscope, roles: ["provider", "clinical"] },
       { href: "/pathology", label: "Pathology", icon: Beaker, queueId: "path", roles: ["provider", "clinical"] },
       { href: "/messages", label: "Messages", icon: MessageSquareText, queueId: "messages", roles: ["provider", "clinical", "patient"] },
@@ -232,18 +233,41 @@ export function PatientHeader() {
 
 export function AppShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
+  const router = useRouter();
   const { persona, sessionLifecycle } = useDemoSession();
   const { data, mode, error } = useDemoBootstrap();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const globalSearchRef = useRef<HTMLInputElement>(null);
   const activePersona = data?.session.authenticated ? data.session.persona : persona;
   const presenterActive = mode === "live" && Boolean(data?.session.presenter);
   const isPatientSurface = pathname.startsWith("/patient/") || activePersona === "patient";
+  const isCommandCenter = pathname === "/command-center";
   const queueCounts = Object.fromEntries((data?.queues ?? []).map((queue) => [queue.id, queue.count]));
+  const scenarioDate = data ? formatInTimeZone(data.scenario.currentTime, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" }) : null;
   const unauthenticated = sessionLifecycle === "ended" || (mode === "live" && data && !data.session.authenticated) || (error instanceof ApiError && error.status === 401);
 
   useEffect(() => {
     if (unauthenticated) replaceWithLogin();
   }, [unauthenticated]);
+
+  useEffect(() => {
+    function focusGlobalSearch(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        globalSearchRef.current?.focus();
+      }
+    }
+
+    window.addEventListener("keydown", focusGlobalSearch);
+    return () => window.removeEventListener("keydown", focusGlobalSearch);
+  }, []);
+
+  function submitGlobalSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = globalSearch.trim();
+    router.replace(query ? `/command-center?q=${encodeURIComponent(query)}` : "/command-center");
+  }
 
   if (unauthenticated) {
     return <main className="mx-auto w-full max-w-xl px-6 py-12"><PageLoading label="Returning to sign in" /></main>;
@@ -266,7 +290,7 @@ export function AppShell({ children }: PropsWithChildren) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r bg-[var(--sidebar)] lg:flex lg:flex-col">
-        <div className="flex h-16 items-center px-5"><Brand href={personaDestinations[activePersona]} /></div>
+        <div className="flex h-[4.5rem] items-center px-5"><Brand href={personaDestinations[activePersona]} /></div>
         <Separator />
         <ScrollArea className="flex-1 px-3 py-5"><MainNavigation persona={activePersona} queueCounts={queueCounts} /></ScrollArea>
         <div className="border-t p-3">
@@ -281,28 +305,43 @@ export function AppShell({ children }: PropsWithChildren) {
       </aside>
 
       <div className="lg:pl-60">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-background/92 px-4 backdrop-blur sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-20 flex h-[4.5rem] items-center justify-between gap-5 border-b bg-background/94 px-4 backdrop-blur sm:px-6 lg:px-7">
           <div className="flex items-center gap-3">
             <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
               <SheetTrigger asChild><Button variant="outline" size="icon-sm" className="lg:hidden" aria-label="Open navigation"><Menu /></Button></SheetTrigger>
               <SheetContent side="left" className="w-72 p-0">
                 <SheetTitle className="sr-only">Navigation</SheetTitle>
-                <div className="flex h-16 items-center px-5"><Brand href={personaDestinations[activePersona]} onNavigate={() => setMobileNavigationOpen(false)} /></div>
+                <div className="flex h-[4.5rem] items-center px-5"><Brand href={personaDestinations[activePersona]} onNavigate={() => setMobileNavigationOpen(false)} /></div>
                 <Separator />
                 <div className="p-4"><MainNavigation persona={activePersona} queueCounts={queueCounts} mobile onNavigate={() => setMobileNavigationOpen(false)} /></div>
               </SheetContent>
             </Sheet>
-            <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+            <div className="hidden items-center gap-2 whitespace-nowrap text-xs text-muted-foreground sm:flex">
               <span>{data?.organization.location ?? "Organization"}</span>
               <span aria-hidden="true">·</span>
               {mode === "live" ? <StatusBadge tone="success">Live data</StatusBadge> : <StatusBadge>Connecting</StatusBadge>}
+              {scenarioDate ? <><span className="hidden xl:inline" aria-hidden="true">·</span><span className="hidden xl:inline">{scenarioDate}</span></> : null}
             </div>
           </div>
+          {isCommandCenter ? <form className="hidden min-w-0 flex-1 justify-center md:flex" onSubmit={submitGlobalSearch} role="search">
+            <div className="relative w-full max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                ref={globalSearchRef}
+                aria-label="Search patients, charts, and results"
+                className="h-10 bg-card pl-9 pr-14 text-sm shadow-none"
+                placeholder="Search patients, charts, results…"
+                value={globalSearch}
+                onChange={(event) => setGlobalSearch(event.target.value)}
+              />
+              <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border bg-muted px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground">⌘ K</kbd>
+            </div>
+          </form> : null}
           <div className="flex items-center gap-2">
             {data?.session.authenticated ? <PersonaMenu allowPersonaSwitch={presenterActive} /> : null}
           </div>
         </header>
-        <main className="mx-auto min-h-[calc(100vh-4rem)] max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className={cn("mx-auto min-h-[calc(100vh-4.5rem)] max-w-[1600px]", isCommandCenter ? "p-0" : "px-4 py-6 sm:px-6 lg:px-8")}>{children}</main>
       </div>
       {presenterActive ? <PresenterRail /> : null}
     </div>

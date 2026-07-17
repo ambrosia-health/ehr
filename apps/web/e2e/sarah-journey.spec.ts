@@ -124,7 +124,7 @@ test.describe("Sarah Mitchell live demo journey", () => {
 
     await test.step("save a versioned note and structured lesion observation", async () => {
       await openPresenterChapter(page, 2, /\/command-center/);
-      await expect(page.getByRole("heading", { name: "Good morning, Jordan." })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Sarah Mitchell", level: 1 })).toBeVisible();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByLabel("Open navigation").click();
       const mobileNavigation = page.getByRole("dialog");
