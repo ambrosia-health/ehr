@@ -66,7 +66,7 @@ make reset
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `AMBROSIA_API_ORIGIN` | Preview/Production server only | Override for the corresponding Modal ASGI origin used by the same-origin `/api` rewrite. The registered production/preview origins are also selected from `VERCEL_ENV`, so a Git deployment cannot lose API routing solely because Vercel omits build-time env injection. |
+| `AMBROSIA_API_ORIGIN` | Preview/Production server only | Optional override for the corresponding Modal ASGI origin used by the same-origin `/api` rewrite. Without it, canonical/main hosts route to Modal main and preview/unknown hosts route to Modal staging, so builds and safe environment separation do not depend on Vercel env injection. |
 | `NEXT_PUBLIC_APP_URL` | public | Canonical web origin for links; contains no secret. |
 | `NEXT_PUBLIC_DEMO_TEST_MODE` | public | Keep `false` for local, preview, production and integrated E2E. It may be `true` only in an isolated frontend/API harness whose backend is explicitly `APP_ENV=test`; that harness alone may send `X-Demo-Persona`. |
 | `PRESENTER_ACCESS_CODE` | protected server-only | Synthetic hosted-E2E credential synchronized with Modal and GitHub; never exposed through `NEXT_PUBLIC_*` or application responses. |

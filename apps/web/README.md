@@ -12,7 +12,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-`AMBROSIA_API_ORIGIN` defaults to `http://127.0.0.1:8000` only in development. It is mandatory for production builds and deployments.
+`AMBROSIA_API_ORIGIN` defaults to `http://127.0.0.1:8000` in development and remains available as an explicit server-side override. Managed deployments need no routing variable: canonical and main-branch hosts route to Modal main, while preview and unknown hosts route to Modal staging.
 
 ## Quality gates
 
@@ -40,7 +40,7 @@ Local E2E skips when those credentials are absent; CI fails explicitly so the cr
 
 The managed Vercel project is `ambrosia-ehr` (`prj_ad1AsXV5muySOAyBsxMgcKAj1SVa`), its Root Directory is `apps/web`, and its canonical synthetic-demo site is [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Native Git integration with `ambrosia-health/ehr` creates branch/PR previews and deploys `main`; no `VERCEL_TOKEN` or manual per-contributor environment setup is required. `.github/workflows/vercel-preview.yml` verifies pull requests and smoke-tests successful non-production deployment events rather than creating a second CLI deployment.
 
-Managed Preview `AMBROSIA_API_ORIGIN` targets the synthetic Modal staging API; Production targets the synthetic Modal main API. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) is the authorized reconciliation path for these bindings and the corresponding platform secrets. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
+Managed Preview `AMBROSIA_API_ORIGIN` targets the synthetic Modal staging API; Production targets the synthetic Modal main API. These optional overrides match the host-based defaults in `next.config.ts`. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) is the authorized reconciliation path for these bindings and the corresponding platform secrets. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
 
 Never set `NEXT_PUBLIC_DEMO_TEST_MODE=true` in production. Presenter capability comes only from the signed HTTP-only session returned by the domain API.
 
