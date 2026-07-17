@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -19,33 +19,29 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Ambrosia Health Domain API"
-    environment: str = Field(
-        default="development", validation_alias=AliasChoices("APP_ENV", "ENVIRONMENT")
-    )
+    environment: str = Field(default="development", validation_alias="APP_ENV")
     database_url: str = Field(
         default="sqlite+aiosqlite:///./.ambrosia/ambrosia.db",
-        validation_alias=AliasChoices("DATABASE_URL", "NEON_DATABASE_URL"),
+        validation_alias="DATABASE_URL",
     )
     session_secret: str = Field(
         default="local-demo-secret-change-before-deploy",
-        validation_alias=AliasChoices(
-            "AUTH_SESSION_SECRET", "SESSION_SECRET", "AMBROSIA_SESSION_SECRET"
-        ),
+        validation_alias="AUTH_SESSION_SECRET",
     )
     session_cookie_name: str = "ambrosia_session"
     session_ttl_seconds: int = 60 * 60 * 12
     presenter_key: str = Field(
         default="ambrosia-demo",
-        validation_alias=AliasChoices("DEMO_PRESENTER_SECRET", "PRESENTER_KEY"),
+        validation_alias="DEMO_PRESENTER_SECRET",
     )
     demo_mode: bool = True
     secure_cookies: bool = Field(
         default=False,
-        validation_alias=AliasChoices("SESSION_COOKIE_SECURE", "SECURE_COOKIES"),
+        validation_alias="SESSION_COOKIE_SECURE",
     )
     allow_demo_reset: bool = Field(
         default=False,
-        validation_alias=AliasChoices("ALLOW_SYNTHETIC_DEMO_RESET", "ALLOW_DEMO_RESET"),
+        validation_alias="ALLOW_SYNTHETIC_DEMO_RESET",
     )
     auto_create_schema: bool = True
     auto_seed: bool = True
@@ -57,7 +53,7 @@ class Settings(BaseSettings):
     execution_platform: str = Field(default="local", validation_alias="EXECUTION_PLATFORM")
     ai_timeout_seconds: float = Field(
         default=8.0,
-        validation_alias=AliasChoices("AI_REQUEST_TIMEOUT_SECONDS", "AI_TIMEOUT_SECONDS"),
+        validation_alias="AI_REQUEST_TIMEOUT_SECONDS",
     )
 
     @field_validator("database_url", mode="before")

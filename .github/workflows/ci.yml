@@ -130,7 +130,6 @@ jobs:
       AUTO_SEED: "false"
       AUTH_SESSION_SECRET: ambrosia-ci-synthetic-session-secret-not-for-shared-use
       DEMO_PRESENTER_SECRET: ambrosia-ci-presenter
-      MODAL_INTERNAL_AUTH_SECRET: ambrosia-ci-modal-internal-not-for-shared-use
       DATABASE_URL: sqlite+aiosqlite:///./.ambrosia/e2e.db
       AMBROSIA_API_ORIGIN: http://127.0.0.1:8000
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000

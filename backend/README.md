@@ -33,7 +33,7 @@ ambrosia-db verify
 
 ## Core environment
 
-- `DATABASE_URL` or `NEON_DATABASE_URL`: asyncpg-compatible Neon URL; defaults to local SQLite.
+- `DATABASE_URL`: asyncpg-compatible Neon URL; defaults to local SQLite.
 - `APP_ENV`: `development`, `test`, or `production`.
 - `AUTH_SESSION_SECRET`: required and non-default in production.
 - `DEMO_PRESENTER_SECRET`: required and non-default in production.

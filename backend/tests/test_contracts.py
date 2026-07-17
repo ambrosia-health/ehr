@@ -112,7 +112,6 @@ def test_zero_configuration_database_uses_managed_local_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("NEON_DATABASE_URL", raising=False)
 
     settings = Settings(_env_file=None)
 
