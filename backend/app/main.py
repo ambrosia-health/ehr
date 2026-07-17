@@ -82,20 +82,14 @@ from .schemas import (
     AmbientRequest,
     AmendmentRequest,
     AppealRequest,
-    AppointmentBookingRequest,
-    ApproveDraftRequest,
     ClaimResubmitRequest,
     CompositeIntakeRequest,
+    ConversationMessageRequest,
     DemoSessionRequest,
     DraftMessageRequest,
-    EncounterNoteDraftRequest,
-    IntakeRequest,
     LesionObservationRequest,
-    LoginRequest,
-    MessageRequest,
     NoteUpdateRequest,
     PathologyReviewRequest,
-    PatientInitiationRequest,
     ReviewCompleteRequest,
     SwitchPersonaRequest,
     TriggerRequest,
@@ -130,6 +124,7 @@ from .services import (
 _RFC3339_DATETIME = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?$"
 )
+MAX_API_REQUEST_BYTES = 256 * 1024
 
 
 def _rfc3339(value: datetime) -> str:
@@ -191,7 +186,30 @@ app.add_middleware(
 async def prevent_sensitive_response_caching(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    response = await call_next(request)
+    response = None
+    if request.url.path.startswith("/api") and request.method in {"POST", "PUT", "PATCH"}:
+        content_length = request.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = -1
+            if declared_length < 0:
+                response = CamelJSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length header"}
+                )
+            elif declared_length > MAX_API_REQUEST_BYTES:
+                response = CamelJSONResponse(
+                    status_code=413, content={"detail": "API request body exceeds 256 KB"}
+                )
+        if response is None:
+            body = await request.body()
+            if len(body) > MAX_API_REQUEST_BYTES:
+                response = CamelJSONResponse(
+                    status_code=413, content={"detail": "API request body exceeds 256 KB"}
+                )
+    if response is None:
+        response = await call_next(request)
     if request.url.path.startswith("/api"):
         response.headers["Cache-Control"] = "private, no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -278,15 +296,14 @@ def clear_session_cookie(response: Response, runtime: Settings) -> None:
     )
 
 
-@app.get("/healthz")
 @app.get("/api/health")
-async def health(session: Session) -> dict[str, Any]:
+async def health(session: Session) -> Any:
     try:
         await session.execute(text("SELECT 1"))
         database = "healthy"
     except Exception:
         database = "unavailable"
-    return {
+    payload = {
         "status": "healthy" if database == "healthy" else "degraded",
         "service": "ambrosia-domain-api",
         "database": database,
@@ -295,9 +312,11 @@ async def health(session: Session) -> dict[str, Any]:
         "demo_mode": get_settings().demo_mode,
         "time": utcnow(),
     }
+    if database != "healthy":
+        return CamelJSONResponse(status_code=503, content=payload)
+    return payload
 
 
-@app.get("/api/auth/personas")
 @app.get("/api/personas")
 async def personas(session: Session) -> dict[str, Any]:
     if not get_settings().demo_mode:
@@ -405,18 +424,6 @@ async def _login_persona(
     return {"session": session_data}
 
 
-@app.post("/api/auth/login")
-async def login(
-    payload: LoginRequest,
-    response: Response,
-    session: Session,
-    runtime: Annotated[Settings, Depends(get_settings)],
-) -> dict[str, Any]:
-    return await _login_persona(
-        session, response, runtime, payload.persona_key, payload.presenter_key
-    )
-
-
 @app.post("/api/auth/demo/session")
 async def demo_session(
     payload: DemoSessionRequest,
@@ -450,7 +457,7 @@ async def switch_persona(
 ) -> dict[str, Any]:
     target = await session.scalar(
         select(User).where(
-            User.persona_key == payload.persona_key,
+            User.persona_key == payload.persona,
             User.organization_id == presenter.organization_id,
             User.is_active.is_(True),
         )
@@ -463,7 +470,7 @@ async def switch_persona(
         DemoIdentityProvider(runtime).issue(target, presenter_actor_id=actor_id),
         runtime,
     )
-    target_principal = await principal_from_persona(payload.persona_key, session)
+    target_principal = await principal_from_persona(payload.persona, session)
     switched = principal_payload(target_principal)
     switched["presenter"] = True
     switched["is_presenter"] = True
@@ -497,60 +504,6 @@ async def patient_chart(
 ) -> dict[str, Any]:
     enforce_patient_scope(principal, patient_id)
     return await get_patient_bundle(session, principal.organization_id, patient_id)
-
-
-async def _initiate_patient_journey_legacy(
-    payload: PatientInitiationRequest,
-    principal: PatientCarePrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    patient = await _resolve_patient(session, principal, payload.patient_id)
-    now = await domain_now(session, principal.organization_id)
-    conversation = Conversation(
-        organization_id=principal.organization_id,
-        patient_id=patient.id,
-        subject="New changing lesion concern",
-        status="open",
-        last_message_at=now,
-    )
-    session.add(conversation)
-    await session.flush()
-    message = Message(
-        organization_id=principal.organization_id,
-        conversation_id=conversation.id,
-        sender_user_id=principal.user_id,
-        sender_kind="patient" if "patient" in principal.roles else "staff",
-        body=(
-            f"{payload.concern}. Changes: {', '.join(payload.changes)}. "
-            f"Symptoms: {', '.join(payload.symptoms) or 'none'}."
-        ),
-        status="sent",
-        sent_at=now,
-    )
-    session.add(message)
-    session.add(
-        AuditEvent(
-            organization_id=principal.organization_id,
-            actor_user_id=principal.user_id,
-            action="patient_concern_initiated",
-            entity_type="conversation",
-            entity_id=conversation.id,
-            patient_id=patient.id,
-            occurred_at=now,
-            detail_json={
-                "urgentWarningSigns": payload.urgent_warning_signs,
-                "imageProvided": bool(payload.image_url),
-            },
-        )
-    )
-    await session.commit()
-    return {
-        "conversation_id": conversation.id,
-        "patient_id": patient.id,
-        "triage": "staff_review" if payload.urgent_warning_signs else "routine",
-        "urgent_warning_signs": payload.urgent_warning_signs,
-        "availability": await get_availability(session, principal.organization_id),
-    }
 
 
 async def _assert_slot_available(
@@ -692,58 +645,6 @@ async def _require_assigned_encounter_provider(
 @app.get("/api/appointments/availability")
 async def availability(principal: PatientCarePrincipal, session: Session) -> dict[str, Any]:
     return {"slots": await get_availability(session, principal.organization_id)}
-
-
-async def _book_appointment_legacy(
-    payload: AppointmentBookingRequest,
-    principal: PatientCarePrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    patient = await _resolve_patient(session, principal, payload.patient_id)
-    now = await domain_now(session, principal.organization_id)
-    provider = await session.scalar(
-        select(Provider).where(
-            Provider.id == payload.provider_id,
-            Provider.organization_id == principal.organization_id,
-        )
-    )
-    location = await session.scalar(
-        select(Location).where(
-            Location.id == payload.location_id,
-            Location.organization_id == principal.organization_id,
-        )
-    )
-    if provider is None or location is None:
-        raise HTTPException(status_code=404, detail="Provider or location not found")
-    await _assert_slot_available(
-        session,
-        organization_id=principal.organization_id,
-        provider_id=provider.id,
-        starts_at=payload.starts_at,
-    )
-    appointment = Appointment(
-        organization_id=principal.organization_id,
-        patient_id=patient.id,
-        provider_id=provider.id,
-        location_id=location.id,
-        starts_at=payload.starts_at,
-        duration_minutes=30,
-        visit_type=payload.visit_type,
-        reason=payload.reason,
-        status="booked",
-        readiness_status="not_started",
-        booked_at=now,
-    )
-    session.add(appointment)
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=409, detail="This appointment slot is no longer available"
-        ) from exc
-    await session.refresh(appointment)
-    return {"appointment": row_dict(appointment)}
 
 
 @app.post("/api/intake/submissions")
@@ -1249,202 +1150,6 @@ async def composite_intake_submission(
     }
 
 
-async def _submit_structured_intake_legacy(
-    payload: IntakeRequest,
-    principal: PatientCarePrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    patient = await _resolve_patient(session, principal, payload.patient_id)
-    now = await domain_now(session, principal.organization_id)
-    appointment = await session.scalar(
-        select(Appointment).where(
-            Appointment.id == payload.appointment_id,
-            Appointment.patient_id == patient.id,
-            Appointment.organization_id == principal.organization_id,
-        )
-    )
-    if appointment is None:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    consent_aliases = {"photography": "clinical_photography"}
-    accepted_consents = {
-        consent_aliases.get(item.consent_type, item.consent_type)
-        for item in payload.consents
-        if item.accepted and item.signature_text.strip()
-    }
-    required_consents = {"treatment", "privacy", "clinical_photography"}
-    if missing_consents := required_consents - accepted_consents:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Missing explicit consent: {', '.join(sorted(missing_consents))}",
-        )
-    questionnaire = await session.scalar(
-        select(Questionnaire).where(
-            Questionnaire.organization_id == principal.organization_id,
-            Questionnaire.slug == "new-lesion-intake",
-            Questionnaire.is_active.is_(True),
-        )
-    )
-    if questionnaire is None:
-        raise HTTPException(status_code=503, detail="Intake questionnaire is unavailable")
-    for item in payload.medications:
-        existing = await session.scalar(
-            select(Medication).where(
-                Medication.organization_id == principal.organization_id,
-                Medication.patient_id == patient.id,
-                func.lower(Medication.name) == item.name.lower(),
-                Medication.status == "active",
-            )
-        )
-        if existing:
-            existing.dose = item.dose
-            existing.frequency = item.frequency
-        else:
-            session.add(
-                Medication(
-                    organization_id=principal.organization_id,
-                    patient_id=patient.id,
-                    name=item.name,
-                    dose=item.dose,
-                    frequency=item.frequency,
-                    status="active",
-                )
-            )
-    for item in payload.allergies:
-        existing = await session.scalar(
-            select(Allergy).where(
-                Allergy.organization_id == principal.organization_id,
-                Allergy.patient_id == patient.id,
-                func.lower(Allergy.substance) == item.substance.lower(),
-                Allergy.status == "active",
-            )
-        )
-        if existing:
-            existing.reaction = item.reaction
-            existing.severity = item.severity
-        else:
-            session.add(
-                Allergy(
-                    organization_id=principal.organization_id,
-                    patient_id=patient.id,
-                    substance=item.substance,
-                    reaction=item.reaction,
-                    severity=item.severity,
-                    status="active",
-                )
-            )
-    coverage = await session.scalar(
-        select(Coverage).where(
-            Coverage.organization_id == principal.organization_id,
-            Coverage.patient_id == patient.id,
-            Coverage.status == "active",
-        )
-    )
-    insurance = payload.insurance
-    if coverage is None:
-        coverage = Coverage(
-            organization_id=principal.organization_id,
-            patient_id=patient.id,
-            payer_name=insurance.payer_name,
-            plan_name=insurance.plan_name,
-            member_id=insurance.member_id,
-            group_number=insurance.group_number,
-            subscriber_name=insurance.subscriber_name,
-            relationship=insurance.relationship,
-            effective_date=now.date().replace(month=1, day=1),
-            status="active",
-        )
-        session.add(coverage)
-    else:
-        coverage.payer_name = insurance.payer_name
-        coverage.plan_name = insurance.plan_name
-        coverage.member_id = insurance.member_id
-        coverage.group_number = insurance.group_number
-        coverage.subscriber_name = insurance.subscriber_name
-        coverage.relationship = insurance.relationship
-    for consent in payload.consents:
-        if not consent.accepted:
-            continue
-        consent_type = consent_aliases.get(consent.consent_type, consent.consent_type)
-        existing = await session.scalar(
-            select(Consent).where(
-                Consent.organization_id == principal.organization_id,
-                Consent.patient_id == patient.id,
-                Consent.consent_type == consent_type,
-                Consent.version == consent.version,
-                Consent.revoked_at.is_(None),
-            )
-        )
-        if existing is None:
-            session.add(
-                Consent(
-                    organization_id=principal.organization_id,
-                    patient_id=patient.id,
-                    encounter_id=None,
-                    consent_type=consent_type,
-                    version=consent.version,
-                    accepted_at=now,
-                    accepted_by_name=f"{patient.first_name} {patient.last_name}",
-                    signature_text=consent.signature_text,
-                )
-            )
-    response_record = await session.scalar(
-        select(QuestionnaireResponse).where(
-            QuestionnaireResponse.organization_id == principal.organization_id,
-            QuestionnaireResponse.patient_id == patient.id,
-            QuestionnaireResponse.appointment_id == appointment.id,
-        )
-    )
-    answers = {
-        "reasonForVisit": payload.reason_for_visit,
-        "lesionHistory": payload.lesion_history,
-        "symptoms": payload.symptoms,
-        "changes": payload.changes,
-        "personalSkinCancerHistory": payload.personal_skin_cancer_history,
-        "familySkinCancerHistory": payload.family_skin_cancer_history,
-        "pharmacy": payload.pharmacy,
-        "imageUrls": payload.image_urls,
-    }
-    if response_record is None:
-        response_record = QuestionnaireResponse(
-            organization_id=principal.organization_id,
-            questionnaire_id=questionnaire.id,
-            patient_id=patient.id,
-            appointment_id=appointment.id,
-            status="completed",
-            response_json=answers,
-            completed_at=now,
-        )
-        session.add(response_record)
-    else:
-        response_record.response_json = answers
-        response_record.status = "completed"
-        response_record.completed_at = now
-    appointment.readiness_status = "ready"
-    await set_demo_chapter(session, principal.organization_id, "command_center")
-    eligibility, estimate = await _eligibility_and_estimate(
-        session,
-        organization_id=principal.organization_id,
-        patient=patient,
-        coverage=coverage,
-        appointment=appointment,
-    )
-    await session.commit()
-    return {
-        "patient_id": patient.id,
-        "appointment_id": appointment.id,
-        "response_id": response_record.id,
-        "eligibility": row_dict(eligibility),
-        "estimate": row_dict(estimate),
-        "normalized_records": {
-            "medications": len(payload.medications),
-            "allergies": len(payload.allergies),
-            "consents": sum(item.accepted for item in payload.consents),
-            "coverage": 1,
-        },
-    }
-
-
-@app.get("/api/dashboard/command-center")
 @app.get("/api/dashboard")
 async def dashboard(principal: OperationsPrincipal, session: Session) -> dict[str, Any]:
     data = await command_center(session, principal.organization_id)
@@ -1559,7 +1264,7 @@ async def update_draft_note(
         select(EncounterNote).where(
             EncounterNote.id == note_id,
             EncounterNote.organization_id == principal.organization_id,
-        )
+        ).with_for_update()
     )
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -1604,7 +1309,7 @@ async def amend_note(
         select(EncounterNote).where(
             EncounterNote.id == note_id,
             EncounterNote.organization_id == principal.organization_id,
-        )
+        ).with_for_update()
     )
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
@@ -1613,6 +1318,20 @@ async def amend_note(
         principal=principal,
         encounter_id=note.encounter_id,
     )
+    amendment_id = uuid.uuid5(
+        note.id,
+        hashlib.sha256(
+            f"{principal.user_id}|{payload.reason}|{payload.amendment_text}".encode()
+        ).hexdigest(),
+    )
+    existing_amendment = await session.scalar(
+        select(NoteAmendment).where(
+            NoteAmendment.id == amendment_id,
+            NoteAmendment.organization_id == principal.organization_id,
+        )
+    )
+    if existing_amendment is not None:
+        return {"note": row_dict(note), "amendment": row_dict(existing_amendment)}
     if note.status not in {"signed", "amended"}:
         raise HTTPException(status_code=409, detail="Only signed notes may be amended")
     signed_at = await domain_now(session, principal.organization_id)
@@ -1620,6 +1339,7 @@ async def amend_note(
         f"{note.id}|{payload.reason}|{payload.amendment_text}|{principal.user_id}|{signed_at.isoformat()}|{runtime.session_secret}".encode()
     ).hexdigest()
     amendment = NoteAmendment(
+        id=amendment_id,
         organization_id=principal.organization_id,
         note_id=note.id,
         author_user_id=principal.user_id,
@@ -1759,77 +1479,6 @@ async def add_lesion_observation(
     }
 
 
-@app.post("/api/lesions/{lesion_id}/observations")
-async def add_scoped_lesion_observation(
-    lesion_id: uuid.UUID,
-    payload: LesionObservationRequest,
-    principal: ClinicalPrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    if payload.lesion_id is not None and payload.lesion_id != lesion_id:
-        raise HTTPException(status_code=422, detail="Path and body lesion IDs do not match")
-    result = await add_lesion_observation(
-        payload.model_copy(update={"lesion_id": lesion_id}), principal, session
-    )
-    observation = result["observation"]
-    return {
-        **result,
-        "observation_id": observation["id"],
-        "recorded_at": observation["observed_at"],
-    }
-
-
-@app.post("/api/encounters/{encounter_id}/note-draft")
-async def save_encounter_note_draft(
-    encounter_id: uuid.UUID,
-    payload: EncounterNoteDraftRequest,
-    principal: ProviderPrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    encounter = await _require_assigned_encounter_provider(
-        session,
-        principal=principal,
-        encounter_id=encounter_id,
-    )
-    note = await session.scalar(
-        select(EncounterNote).where(
-            EncounterNote.encounter_id == encounter.id,
-            EncounterNote.organization_id == principal.organization_id,
-        )
-    )
-    if note is None:
-        raise HTTPException(status_code=404, detail="Encounter note not found")
-    if note.status in {"signed", "amended"}:
-        raise HTTPException(status_code=409, detail="Signed notes are immutable; add an amendment")
-    now = await domain_now(session, principal.organization_id)
-    structured = dict(note.structured_content)
-    structured["assessmentPlan"] = payload.assessment_plan
-    note.structured_content = structured
-    note.content = f"{note.content.rstrip()}\n\nAssessment and plan: {payload.assessment_plan}"
-    note.status = "draft"
-    note.current_version += 1
-    version = NoteVersion(
-        organization_id=principal.organization_id,
-        note_id=note.id,
-        version_number=note.current_version,
-        author_user_id=principal.user_id,
-        content=note.content,
-        structured_content=structured,
-        content_hash=hashlib.sha256(note.content.encode()).hexdigest(),
-        reason="Clinician saved assessment and plan draft",
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(version)
-    await session.commit()
-    return {
-        "note_id": note.id,
-        "version": note.current_version,
-        "saved_at": now,
-    }
-
-
-@app.post("/api/encounters/{encounter_id}/review-complete")
 @app.post("/api/encounters/{encounter_id}/complete")
 async def review_and_complete(
     encounter_id: uuid.UUID,
@@ -1916,7 +1565,6 @@ async def review_and_complete(
     }
 
 
-@app.get("/api/pathology")
 @app.get("/api/pathology/results")
 async def pathology_queue(principal: ClinicalPrincipal, session: Session) -> dict[str, Any]:
     rows = (
@@ -1948,7 +1596,6 @@ async def pathology_queue(principal: ClinicalPrincipal, session: Session) -> dic
     }
 
 
-@app.post("/api/pathology/{result_id}/review")
 @app.post("/api/pathology/results/{result_id}/review")
 async def review_pathology_result(
     result_id: uuid.UUID,
@@ -2327,66 +1974,13 @@ async def _triage_patient_message(
     return "staff_review", task.id
 
 
-@app.post("/api/messages")
-async def send_message(
-    payload: MessageRequest,
-    principal: PatientCarePrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    conversation = await session.scalar(
-        select(Conversation).where(
-            Conversation.id == payload.conversation_id,
-            Conversation.organization_id == principal.organization_id,
-        )
-    )
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    enforce_patient_scope(principal, conversation.patient_id)
-    sender_kind = (
-        "patient"
-        if "patient" in principal.roles
-        else "provider"
-        if "provider" in principal.roles
-        else "staff"
-    )
-    message = Message(
-        organization_id=principal.organization_id,
-        conversation_id=conversation.id,
-        sender_user_id=principal.user_id,
-        sender_kind=sender_kind,
-        body=payload.body,
-        status="sent",
-        sent_at=await domain_now(session, principal.organization_id),
-    )
-    session.add(message)
-    conversation.last_message_at = message.sent_at
-    await session.flush()
-    await messaging_provider.deliver_message(session, message)
-    triage, triage_task_id = await _triage_patient_message(
-        session,
-        principal=principal,
-        conversation=conversation,
-        message=message,
-    )
-    await session.commit()
-    return {
-        "message": row_dict(message),
-        "triage": triage,
-        "triage_task_id": triage_task_id,
-    }
-
-
 @app.post("/api/conversations/{conversation_id}/messages")
 async def send_conversation_message(
     conversation_id: uuid.UUID,
-    request: Request,
+    payload: ConversationMessageRequest,
     principal: PatientCarePrincipal,
     session: Session,
 ) -> dict[str, Any]:
-    data = await request.json()
-    body = data.get("body") or data.get("message")
-    if not isinstance(body, str) or not body.strip():
-        raise HTTPException(status_code=422, detail="Message body is required")
     conversation = await session.scalar(
         select(Conversation).where(
             Conversation.id == conversation_id,
@@ -2396,24 +1990,37 @@ async def send_conversation_message(
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     enforce_patient_scope(principal, conversation.patient_id)
-    draft_id = data.get("approve_ai_draft_id") or data.get("approveAiDraftId")
+    draft_id = payload.approve_ai_draft_id
     draft = None
+    approved_message = None
     if draft_id:
         if "patient" in principal.roles:
             raise HTTPException(status_code=403, detail="Patients cannot approve AI message drafts")
-        try:
-            parsed_draft_id = uuid.UUID(str(draft_id))
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Invalid AI draft ID") from exc
         draft = await session.scalar(
             select(MessageDraft).where(
-                MessageDraft.id == parsed_draft_id,
+                MessageDraft.id == draft_id,
                 MessageDraft.conversation_id == conversation.id,
                 MessageDraft.organization_id == principal.organization_id,
-                MessageDraft.status == "proposed",
-            )
+            ).with_for_update()
         )
         if draft is None:
+            raise HTTPException(status_code=409, detail="AI draft is not available for approval")
+        approved_message = await session.scalar(
+            select(Message).where(
+                Message.id == uuid.uuid5(draft.id, "approved-message"),
+                Message.conversation_id == conversation.id,
+                Message.organization_id == principal.organization_id,
+            )
+        )
+        if draft.status == "approved" and approved_message is not None:
+            return {
+                "message_id": approved_message.id,
+                "sent_at": approved_message.sent_at,
+                "status": approved_message.status,
+                "triage": "routine",
+                "triage_task_id": None,
+            }
+        if draft.status != "proposed":
             raise HTTPException(status_code=409, detail="AI draft is not available for approval")
     sender_kind = (
         "patient"
@@ -2423,11 +2030,12 @@ async def send_conversation_message(
         else "staff"
     )
     message = Message(
+        id=uuid.uuid5(draft.id, "approved-message") if draft else uuid.uuid4(),
         organization_id=principal.organization_id,
         conversation_id=conversation.id,
         sender_user_id=principal.user_id,
         sender_kind=sender_kind,
-        body=body.strip(),
+        body=payload.body,
         status="sent",
         sent_at=await domain_now(session, principal.organization_id),
         ai_run_id=draft.ai_run_id if draft else None,
@@ -2449,7 +2057,7 @@ async def send_conversation_message(
                 ai_run_id=draft.ai_run_id,
                 source_entity_type="message_draft",
                 source_entity_id=draft.id,
-                detail_json={"editedBeforeSend": body.strip() != draft.body.strip()},
+                detail_json={"editedBeforeSend": payload.body != draft.body.strip()},
             )
         )
     triage, triage_task_id = await _triage_patient_message(
@@ -2527,57 +2135,7 @@ async def draft_message(
     }
 
 
-@app.post("/api/message-drafts/{draft_id}/approve")
-async def approve_message_draft(
-    draft_id: uuid.UUID,
-    payload: ApproveDraftRequest,
-    principal: ClinicalPrincipal,
-    session: Session,
-) -> dict[str, Any]:
-    draft = await session.scalar(
-        select(MessageDraft).where(
-            MessageDraft.id == draft_id,
-            MessageDraft.organization_id == principal.organization_id,
-        )
-    )
-    if draft is None:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    if draft.status != "proposed":
-        raise HTTPException(status_code=409, detail="Draft is no longer awaiting approval")
-    now = await domain_now(session, principal.organization_id)
-    message = Message(
-        organization_id=principal.organization_id,
-        conversation_id=draft.conversation_id,
-        sender_user_id=principal.user_id,
-        sender_kind="provider" if "provider" in principal.roles else "staff",
-        body=payload.body or draft.body,
-        status="sent",
-        sent_at=now,
-        ai_run_id=draft.ai_run_id,
-    )
-    session.add(message)
-    draft.status = "approved"
-    await session.flush()
-    await messaging_provider.deliver_message(session, message)
-    session.add(
-        ProvenanceRecord(
-            organization_id=principal.organization_id,
-            entity_type="message",
-            entity_id=message.id,
-            activity="human_approved_ai_draft",
-            actor_user_id=principal.user_id,
-            ai_run_id=draft.ai_run_id,
-            source_entity_type="message_draft",
-            source_entity_id=draft.id,
-            detail_json={"editedBeforeSend": message.body.strip() != draft.body.strip()},
-        )
-    )
-    await session.commit()
-    return {"message": row_dict(message), "draft": row_dict(draft)}
-
-
 @app.get("/api/rcm")
-@app.get("/api/rcm/claims")
 async def revenue_cycle(principal: BillerPrincipal, session: Session) -> dict[str, Any]:
     return await rcm_workspace(session, principal.organization_id)
 
@@ -2893,7 +2451,6 @@ async def bootstrap(principal: CurrentPrincipal, session: Session) -> dict[str, 
     )
 
 
-@app.get("/api/presenter/health")
 @app.get("/api/demo/health")
 async def presenter_health(
     principal: PresenterPrincipal,
@@ -2934,22 +2491,17 @@ async def presenter_health(
         "model_fallback": scenario.fallback_indicator,
         "runtime": runtime.execution_platform,
         "database": "sqlite_local" if runtime.is_sqlite else "neon_postgres",
-        "ai_provider": (
-            "openai"
-            if runtime.openai_api_key
-            else "local_deterministic_fallback"
-        ),
+        "ai_provider": ("openai" if runtime.openai_api_key else "local_deterministic_fallback"),
     }
 
 
-@app.post("/api/presenter/reset")
 @app.post("/api/demo/reset")
 async def reset_demo(
     presenter: PresenterPrincipal,
     session: Session,
     runtime: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
-    if runtime.environment.lower() in {"production", "prod"} and not runtime.allow_demo_reset:
+    if runtime.environment.lower() in {"production", "prod", "staging", "stage"} and not runtime.allow_demo_reset:
         raise HTTPException(
             status_code=403,
             detail="Production reset requires ALLOW_SYNTHETIC_DEMO_RESET=true",
@@ -2958,7 +2510,6 @@ async def reset_demo(
     return {"message": "Canonical synthetic scenario restored", "ids": ids, "at": utcnow()}
 
 
-@app.post("/api/presenter/advance")
 @app.post("/api/demo/advance-time")
 async def advance_time(
     payload: AdvanceTimeRequest,
@@ -2979,7 +2530,6 @@ async def advance_time(
     return {"message": "Demo time advanced", "scenario": scenario, "at": utcnow()}
 
 
-@app.post("/api/presenter/triggers/pathology")
 @app.post("/api/demo/triggers/pathology")
 async def trigger_pathology(
     _payload: TriggerRequest,
@@ -3020,7 +2570,6 @@ async def trigger_pathology(
     }
 
 
-@app.post("/api/presenter/triggers/claim")
 @app.post("/api/demo/triggers/claim-response")
 async def trigger_claim_response(
     payload: TriggerRequest,

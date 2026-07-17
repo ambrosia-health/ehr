@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type Props
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   demoSessionEndedStorageKey,
+  demoSessionExpiredEventName,
   isDemoSessionMarkedEnded,
   markDemoSessionActive,
   markDemoSessionEnded,
@@ -67,14 +68,24 @@ export function AppProviders({
       if (event.key === demoSessionEndedStorageKey || event.key === null) synchronizeLifecycle();
     }
 
+    function handleExpiredSession() {
+      markDemoSessionEnded();
+      setSessionLifecycle("ended");
+      updatePersona("provider");
+      resetSessionState();
+      queryClient.clear();
+    }
+
     synchronizeLifecycle();
     window.addEventListener("pageshow", synchronizeLifecycle);
     window.addEventListener("storage", handleStorage);
+    window.addEventListener(demoSessionExpiredEventName, handleExpiredSession);
     return () => {
       window.removeEventListener("pageshow", synchronizeLifecycle);
       window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(demoSessionExpiredEventName, handleExpiredSession);
     };
-  }, []);
+  }, [queryClient, resetSessionState]);
 
   function setPersona(nextPersona: Persona) {
     updatePersona(nextPersona);
@@ -93,6 +104,7 @@ export function AppProviders({
     setSessionLifecycle("ended");
     updatePersona("provider");
     resetSessionState();
+    queryClient.clear();
   }
 
   function updateEncounterReview(next: { noteDraft?: string; selectedProposalIds?: string[] }) {

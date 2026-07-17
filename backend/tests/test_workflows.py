@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.database import SessionLocal
+from app.database import SessionLocal, engine
 from app.main import app
 from app.models import (
     Appeal,
@@ -121,9 +123,7 @@ async def test_intake_validates_consents_slots_triage_and_retry(client) -> None:
     assert second.json()["eligibilityCheckId"] == first_receipt["eligibilityCheckId"]
     assert second.json()["estimateId"] == first_receipt["estimateId"]
 
-    changed_coverage = _intake_body(
-        slots[0]["id"], urgent_signs=["Bleeding that will not stop"]
-    )
+    changed_coverage = _intake_body(slots[0]["id"], urgent_signs=["Bleeding that will not stop"])
     changed_coverage["insurancePayer"] = "Northstar Health Plan"
     changed_coverage["insuranceMemberId"] = "NSH-NEW-7781"
     changed = await client.post(
@@ -149,9 +149,9 @@ async def test_intake_validates_consents_slots_triage_and_retry(client) -> None:
     assert reloaded["patient"]["readiness"] == 0
     assert reloaded["intake"]["eligibility"]["payer"] == "Northstar Health Plan"
     assert reloaded["intake"]["eligibility"]["memberId"] == "NSH-NEW-7781"
-    assert reloaded["financialContext"]["eligibility"]["id"] == changed_receipt[
-        "eligibilityCheckId"
-    ]
+    assert (
+        reloaded["financialContext"]["eligibility"]["id"] == changed_receipt["eligibilityCheckId"]
+    )
     assert reloaded["financialContext"]["estimate"]["id"] == changed_receipt["estimateId"]
     assert reloaded["scenario"]["chapter"] == 2
 
@@ -171,7 +171,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         f"/api/encounters/{ids['sarah_encounter_id']}/complete",
         headers=_provider_headers(),
         json={
-            "approvedProposalIds": action_ids[:-1],
+            "proposedActionIds": action_ids[:-1],
             "attest": True,
             "signNote": True,
             "attestation": "Reviewed source records",
@@ -215,7 +215,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         f"/api/encounters/{ids['sarah_encounter_id']}/complete",
         headers=_provider_headers(),
         json={
-            "approvedProposalIds": action_ids,
+            "proposedActionIds": action_ids,
             "attest": True,
             "signNote": True,
             "attestation": "Reviewed source records and approved all actions",
@@ -248,7 +248,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         wrong_provider = await wrong_provider_client.post(
             f"/api/encounters/{ids['sarah_encounter_id']}/complete",
             json={
-                "approvedProposalIds": action_ids,
+                "proposedActionIds": action_ids,
                 "attest": True,
                 "signNote": True,
                 "attestation": "Reviewed source records and approved all actions",
@@ -266,7 +266,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         f"/api/encounters/{ids['sarah_encounter_id']}/complete",
         headers=_provider_headers(),
         json={
-            "approvedProposalIds": action_ids,
+            "proposedActionIds": action_ids,
             "attest": True,
             "signNote": True,
             "attestation": "Reviewed source records and approved all actions",
@@ -298,9 +298,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
                 NoteVersion.version_number == signed_note.current_version,
             )
         )
-        aftercare_draft = await session.get(
-            MessageDraft, sid("message-draft:sarah:aftercare")
-        )
+        aftercare_draft = await session.get(MessageDraft, sid("message-draft:sarah:aftercare"))
         shower_reply_draft = await session.get(
             MessageDraft, sid("message-draft:sarah:shower-reply")
         )
@@ -324,7 +322,7 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         f"/api/encounters/{ids['sarah_encounter_id']}/complete",
         headers=_provider_headers(),
         json={
-            "approvedProposalIds": action_ids,
+            "proposedActionIds": action_ids,
             "attest": True,
             "signNote": True,
             "attestation": "Reviewed source records and approved all actions",
@@ -348,6 +346,13 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
         json={"reason": "Clarify follow-up", "amendmentText": "Follow up in six months."},
     )
     assert amended.status_code == 200
+    amended_retry = await presenter_client.post(
+        f"/api/notes/{ids['sarah_note_id']}/amendments",
+        headers=_provider_headers(),
+        json={"reason": "Clarify follow-up", "amendmentText": "Follow up in six months."},
+    )
+    assert amended_retry.status_code == 200
+    assert amended_retry.json()["amendment"]["id"] == amended.json()["amendment"]["id"]
     amended_at = datetime.fromisoformat(amended.json()["amendment"]["signedAt"])
     assert amended_at.tzinfo is not None
     assert amended_at >= signed_at
@@ -454,7 +459,9 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
     assert presenter_bootstrap["encounter"]["completionReceipt"]["claimId"] == receipt["claimId"]
     assert presenter_bootstrap["patient"]["lesion"]["status"] == "biopsied"
     assert presenter_bootstrap["pathology"]["aiProvenance"]["capability"] == "pathology_summary"
-    assert datetime.fromisoformat(presenter_bootstrap["pathology"]["reviewedAt"]) == first_reviewed_at
+    assert (
+        datetime.fromisoformat(presenter_bootstrap["pathology"]["reviewedAt"]) == first_reviewed_at
+    )
     assert presenter_bootstrap["pathology"]["notifiedAt"] is not None
     assert presenter_bootstrap["scenario"]["chapter"] == 5
 
@@ -474,17 +481,16 @@ async def test_completion_pathology_claims_integrity_and_domain_clock(
 async def test_message_routing_and_human_approval_provenance(client) -> None:
     ids = canonical_ids()
     routine = await client.post(
-        "/api/messages",
+        f"/api/conversations/{ids['sarah_conversation_id']}/messages",
         headers=_patient_headers(),
-        json={"conversationId": str(ids["sarah_conversation_id"]), "body": "Thank you."},
+        json={"body": "Thank you."},
     )
     assert routine.status_code == 200
     assert routine.json()["triage"] == "routine"
     warning = await client.post(
-        "/api/messages",
+        f"/api/conversations/{ids['sarah_conversation_id']}/messages",
         headers=_patient_headers(),
         json={
-            "conversationId": str(ids["sarah_conversation_id"]),
             "body": "It is warmer and redder and I am not sure whether it is infected.",
         },
     )
@@ -502,20 +508,69 @@ async def test_message_routing_and_human_approval_provenance(client) -> None:
         )
     assert draft
     sent = await client.post(
-        f"/api/message-drafts/{draft.id}/approve",
+        f"/api/conversations/{ids['sarah_conversation_id']}/messages",
         headers=_provider_headers(),
-        json={},
+        json={"body": draft.body, "approveAiDraftId": str(draft.id)},
     )
     assert sent.status_code == 200, sent.text
+    sent_retry = await client.post(
+        f"/api/conversations/{ids['sarah_conversation_id']}/messages",
+        headers=_provider_headers(),
+        json={"body": draft.body, "approveAiDraftId": str(draft.id)},
+    )
+    assert sent_retry.status_code == 200, sent_retry.text
+    assert sent_retry.json()["messageId"] == sent.json()["messageId"]
     async with SessionLocal() as session:
         provenance = await session.scalar(
             select(ProvenanceRecord).where(
                 ProvenanceRecord.entity_type == "message",
-                ProvenanceRecord.entity_id == uuid.UUID(sent.json()["message"]["id"]),
+                ProvenanceRecord.entity_id == uuid.UUID(sent.json()["messageId"]),
                 ProvenanceRecord.activity == "human_approved_ai_draft",
             )
         )
     assert provenance and provenance.ai_run_id == draft.ai_run_id
+
+
+@pytest.mark.skipif(engine.dialect.name != "postgresql", reason="Postgres row-lock contract")
+async def test_concurrent_draft_approval_is_exactly_once(client) -> None:
+    ids = canonical_ids()
+    drafted = await client.post(
+        "/api/messages/draft",
+        headers=_provider_headers(),
+        json={
+            "conversationId": str(ids["sarah_conversation_id"]),
+            "question": "Can I replace the bandage tomorrow?",
+        },
+    )
+    assert drafted.status_code == 200, drafted.text
+    draft = drafted.json()["draft"]
+    responses = await asyncio.gather(
+        *(
+            client.post(
+                f"/api/conversations/{ids['sarah_conversation_id']}/messages",
+                headers=_provider_headers(),
+                json={"body": draft["body"], "approveAiDraftId": draft["id"]},
+            )
+            for _ in range(2)
+        )
+    )
+    assert [response.status_code for response in responses] == [200, 200]
+    message_ids = {response.json()["messageId"] for response in responses}
+    assert len(message_ids) == 1
+    message_id = uuid.UUID(message_ids.pop())
+    async with SessionLocal() as session:
+        message_count = await session.scalar(
+            select(func.count(Message.id)).where(Message.id == message_id)
+        )
+        provenance_count = await session.scalar(
+            select(func.count(ProvenanceRecord.id)).where(
+                ProvenanceRecord.entity_type == "message",
+                ProvenanceRecord.entity_id == message_id,
+                ProvenanceRecord.activity == "human_approved_ai_draft",
+            )
+        )
+    assert message_count == 1
+    assert provenance_count == 1
 
 
 async def test_conversation_read_receipt_is_directional_tenant_wide_and_idempotent(client) -> None:
@@ -746,9 +801,10 @@ async def test_denial_recovery_stays_visible_and_records_biller_approval(client)
 async def test_lesion_observation_round_trips_site_view_and_comparison(client) -> None:
     ids = canonical_ids()
     response = await client.post(
-        f"/api/lesions/{ids['sarah_lesion_id']}/observations",
+        "/api/lesions/observations",
         headers=_provider_headers(),
         json={
+            "lesionId": str(ids["sarah_lesion_id"]),
             "encounterId": str(ids["sarah_encounter_id"]),
             "site": "left posterior shoulder",
             "view": "posterior",

@@ -1,4 +1,5 @@
 export const demoSessionEndedStorageKey = "ambrosia.demo-session-ended";
+export const demoSessionExpiredEventName = "ambrosia:session-expired";
 
 export const demoSessionCookieNames = ["__Host-ambrosia_session", "ambrosia_session"] as const;
 

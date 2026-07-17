@@ -63,7 +63,6 @@ jobs:
       AUTO_SEED: "false"
       AUTH_SESSION_SECRET: ambrosia-ci-synthetic-session-secret-not-for-shared-use
       DEMO_PRESENTER_SECRET: ambrosia-ci-presenter
-      MODAL_INTERNAL_AUTH_SECRET: ambrosia-ci-modal-internal-not-for-shared-use
       DATABASE_URL: postgresql+asyncpg://ambrosia:ambrosia-ci-only@127.0.0.1:5432/ambrosia
     steps:
       - uses: actions/checkout@v4

@@ -16,12 +16,16 @@ allow_explicit_test_database = (
 )
 if explicit_database_url and allow_explicit_test_database:
     parsed_database_url = urlparse(explicit_database_url)
+    approved_ephemeral_host = os.environ.get("EPHEMERAL_TEST_DATABASE_HOST")
     if not explicit_database_url.startswith("sqlite") and parsed_database_url.hostname not in {
         "127.0.0.1",
         "localhost",
         "::1",
+        approved_ephemeral_host,
     }:
-        raise RuntimeError("Tests may reset only a local disposable database")
+        raise RuntimeError(
+            "Tests may reset only a local database or the exact EPHEMERAL_TEST_DATABASE_HOST"
+        )
 else:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DIRECTORY}/test.db"
 os.environ["APP_ENV"] = "test"

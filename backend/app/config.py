@@ -93,15 +93,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_insecure_production_defaults(self) -> Settings:
-        if self.environment.lower() in {"production", "prod"}:
+        if self.environment.lower() in {"production", "prod", "staging", "stage"}:
             if not self.database_url.startswith("postgresql+asyncpg://"):
-                raise ValueError("Production DATABASE_URL must use PostgreSQL/Neon")
+                raise ValueError("Deployed DATABASE_URL must use PostgreSQL/Neon")
             if self.session_secret == "local-demo-secret-change-before-deploy":
-                raise ValueError("AUTH_SESSION_SECRET must be set in production")
+                raise ValueError("AUTH_SESSION_SECRET must be set when deployed")
             if self.presenter_key == "ambrosia-demo":
-                raise ValueError("DEMO_PRESENTER_SECRET must be set in production")
+                raise ValueError("DEMO_PRESENTER_SECRET must be set when deployed")
             if not self.secure_cookies:
-                raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+                raise ValueError("SESSION_COOKIE_SECURE must be true when deployed")
             if self.session_cookie_name == "ambrosia_session":
                 self.session_cookie_name = "__Host-ambrosia_session"
             self.auto_create_schema = False

@@ -61,15 +61,18 @@ async def test_reset_seed_has_a_fixed_flush_budget(monkeypatch) -> None:
     assert flush_calls <= 50
 
 
-def test_production_requires_postgres_and_forces_safe_runtime_settings() -> None:
+@pytest.mark.parametrize("environment", ["production", "prod", "staging", "stage"])
+def test_deployed_environments_require_postgres_and_force_safe_runtime_settings(
+    environment: str,
+) -> None:
     local = Settings(
         _env_file=None,
         DATABASE_URL="sqlite+aiosqlite:///./ambrosia.db",
     )
     assert local.database_url == "sqlite+aiosqlite:///./ambrosia.db"
 
-    production = {
-        "APP_ENV": "production",
+    deployed = {
+        "APP_ENV": environment,
         "AUTH_SESSION_SECRET": "production-session-secret-32-characters",
         "DEMO_PRESENTER_SECRET": "production-presenter-secret",
         "SESSION_COOKIE_SECURE": True,
@@ -78,14 +81,14 @@ def test_production_requires_postgres_and_forces_safe_runtime_settings() -> None
         Settings(
             _env_file=None,
             DATABASE_URL="sqlite+aiosqlite:///unsafe-production.db",
-            **production,
+            **deployed,
         )
     settings = Settings(
         _env_file=None,
         DATABASE_URL="postgresql://localhost/ambrosia",
         auto_create_schema=True,
         auto_seed=True,
-        **production,
+        **deployed,
     )
     assert settings.database_url.startswith("postgresql+asyncpg://")
     assert settings.secure_cookies is True

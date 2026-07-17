@@ -78,4 +78,18 @@ describe("EncounterWorkspace", () => {
       bootstrap.session = originalSession;
     }
   });
+
+  it("rejects impossible lesion dimensions before sending clinical data", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AppProviders initialPersona="provider"><EncounterWorkspace /></AppProviders>);
+    await user.click(screen.getByRole("tab", { name: "Lesion" }));
+    const length = screen.getByLabelText("Length (mm)");
+    await user.clear(length);
+    await user.type(length, "0");
+    await user.click(screen.getByTestId("save-lesion-observation"));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/between 0 and 100 mm/i)).toBeVisible();
+  });
 });

@@ -199,10 +199,16 @@ export function EncounterWorkspace() {
 
   async function saveObservation() {
     if (mode !== "live" || !providerCanMutate || noteLocked) return;
+    const lengthMm = Number(observation.lengthMm);
+    const widthMm = Number(observation.widthMm);
+    if (!Number.isFinite(lengthMm) || !Number.isFinite(widthMm) || lengthMm <= 0 || widthMm <= 0 || lengthMm > 100 || widthMm > 100) {
+      setSaveError("Lesion length and width must each be between 0 and 100 mm.");
+      return;
+    }
     setSaving("observation");
     setSaveError(null);
     try {
-      const receipt = await apiRequest<ObservationReceipt>(endpoints.lesionObservation, { method: "POST", body: { lesionId, encounterId, site: observation.site, view: observation.view, lengthMm: Number(observation.lengthMm), widthMm: Number(observation.widthMm), morphology: observation.morphology, border: observation.border, pigmentation: observation.pigment, changeOverTime: observation.change, symptoms: observation.symptoms.split(";").map((item) => item.trim()).filter(Boolean), assessment: observation.assessment || null, comparison: observation.comparison || null } });
+      const receipt = await apiRequest<ObservationReceipt>(endpoints.lesionObservation, { method: "POST", body: { lesionId, encounterId, site: observation.site, view: observation.view, lengthMm, widthMm, morphology: observation.morphology, border: observation.border, pigmentation: observation.pigment, changeOverTime: observation.change, symptoms: observation.symptoms.split(";").map((item) => item.trim()).filter(Boolean), assessment: observation.assessment || null, comparison: observation.comparison || null } });
       await queryClient.invalidateQueries({ queryKey: ["demo-bootstrap"] });
       setObservationOverride(null);
       setObservationReceipt(receipt);

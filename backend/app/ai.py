@@ -189,18 +189,35 @@ async def _live_inference(
         )
         response.raise_for_status()
     response_body = response.json()
+    if not isinstance(response_body, dict):
+        raise ValueError("OpenAI response must be a JSON object")
     if response_body.get("status") != "completed":
         raise RuntimeError("openai_response_incomplete")
     model = response_body.get("model", "unreported")
     if model != ATTESTED_AI_MODEL:
         raise RuntimeError("openai_model_attestation_mismatch")
-    output_text = "".join(
-        content.get("text", "")
-        for item in response_body.get("output", [])
-        if item.get("type") == "message"
-        for content in item.get("content", [])
-        if content.get("type") == "output_text"
-    )
+    output_items = response_body.get("output")
+    if not isinstance(output_items, list):
+        raise ValueError("OpenAI output must be a list")
+    text_parts: list[str] = []
+    for item in output_items:
+        if not isinstance(item, dict):
+            raise ValueError("OpenAI output items must be objects")
+        if item.get("type") != "message":
+            continue
+        content_items = item.get("content")
+        if not isinstance(content_items, list):
+            raise ValueError("OpenAI message content must be a list")
+        for content in content_items:
+            if not isinstance(content, dict):
+                raise ValueError("OpenAI message content items must be objects")
+            if content.get("type") != "output_text":
+                continue
+            text = content.get("text")
+            if not isinstance(text, str):
+                raise ValueError("OpenAI output text must be a string")
+            text_parts.append(text)
+    output_text = "".join(text_parts)
     if not output_text:
         raise RuntimeError("openai_output_text_missing")
     raw = json.loads(output_text)

@@ -1,4 +1,10 @@
 import type { DemoActionResult } from "@/lib/api/types";
+import {
+  demoSessionExpiredEventName,
+  markDemoSessionEnded,
+} from "@/lib/auth/session-lifecycle";
+
+const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 export const endpoints = {
   bootstrap: "/api/demo/bootstrap",
@@ -10,7 +16,6 @@ export const endpoints = {
   advanceTime: "/api/demo/advance-time",
   triggerPathology: "/api/demo/triggers/pathology",
   triggerClaimResponse: "/api/demo/triggers/claim-response",
-  demoHealth: "/api/demo/health",
   encounterComplete: (encounterId: string) => `/api/encounters/${encounterId}/complete`,
   noteDraft: (noteId: string) => `/api/notes/${noteId}`,
   lesionObservation: "/api/lesions/observations",
@@ -33,11 +38,21 @@ export class ApiError extends Error {
 
 interface ApiRequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
+  timeoutMs?: number;
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { body, headers, ...requestOptions } = options;
+  const { body, headers, signal: callerSignal, timeoutMs = DEFAULT_API_TIMEOUT_MS, ...requestOptions } = options;
   let response: Response;
+  let timedOut = false;
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
 
   try {
     response = await fetch(path, {
@@ -45,6 +60,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: "include",
       cache: "no-store",
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -52,27 +68,51 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       },
     });
   } catch (error) {
-    throw new ApiError(error instanceof Error ? error.message : "The API could not be reached.", 0);
+    throw new ApiError(
+      timedOut
+        ? "The API request timed out. Please try again."
+        : error instanceof Error
+          ? error.message
+          : "The API could not be reached.",
+      0,
+    );
+  } finally {
+    globalThis.clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  const responseBody = contentType.includes("application/json")
-    ? await response.json()
-    : await response.text();
+  let responseBody: unknown;
+  try {
+    responseBody = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
+  } catch {
+    throw new ApiError("The API returned malformed JSON.", 502);
+  }
+
+  if (response.status === 401 && typeof window !== "undefined") {
+    markDemoSessionEnded();
+    window.dispatchEvent(new Event(demoSessionExpiredEventName));
+  }
 
   if (!response.ok) {
-    const message =
-      typeof responseBody === "object" && responseBody && "detail" in responseBody
-        ? String(responseBody.detail)
+    const detail = typeof responseBody === "object" && responseBody && "detail" in responseBody
+      ? responseBody.detail
+      : null;
+    const message = typeof detail === "string"
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map((item) => typeof item === "object" && item && "msg" in item ? String(item.msg) : String(item)).join("; ")
         : `Request failed with status ${response.status}.`;
     throw new ApiError(message, response.status, responseBody);
   }
 
-  return responseBody as T;
-}
+  if (!contentType.includes("application/json")) {
+    throw new ApiError("The API returned a non-JSON success response.", 502, responseBody);
+  }
 
-export function isApiUnavailable(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 0 || error.status === 404 || error.status >= 500);
+  return responseBody as T;
 }
 
 export async function apiAction(

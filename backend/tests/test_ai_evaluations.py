@@ -228,3 +228,82 @@ async def test_openai_request_uses_luna_low_reasoning_without_storage(monkeypatc
     assert fallback_used is False
     assert error is None
     assert output["headline"].startswith("Sarah Mitchell")
+
+
+@pytest.mark.parametrize(
+    "provider_body",
+    [
+        None,
+        [],
+        {"status": "completed", "model": "gpt-5.6-luna", "output": None},
+        {"status": "completed", "model": "gpt-5.6-luna", "output": [None]},
+        {
+            "status": "completed",
+            "model": "gpt-5.6-luna",
+            "output": [{"type": "message", "content": None}],
+        },
+        {
+            "status": "completed",
+            "model": "gpt-5.6-luna",
+            "output": [{"type": "message", "content": [None]}],
+        },
+        {
+            "status": "completed",
+            "model": "gpt-5.6-luna",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": 42}],
+                }
+            ],
+        },
+        {
+            "status": "completed",
+            "model": "gpt-5.6-luna",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "{not json"}],
+                }
+            ],
+        },
+    ],
+)
+async def test_malformed_openai_response_shapes_select_safe_fallback(
+    monkeypatch, provider_body
+) -> None:
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **_kwargs):
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json=provider_body,
+            )
+
+    monkeypatch.setattr(
+        ai,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_key="test-openai-key", ai_timeout_seconds=1),
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    ids = canonical_ids()
+    async with SessionLocal() as session:
+        run, output = await run_ai(
+            session,
+            organization_id=ids["organization_id"],
+            capability="chart_summary",
+            context={"patientName": "Sarah Mitchell"},
+            patient_id=ids["sarah_patient_id"],
+            requested_by_user_id=None,
+        )
+        await session.commit()
+    assert run.fallback_used is True
+    assert run.provider == "deterministic_fallback"
+    assert run.error_message
+    assert output.headline.startswith("Sarah Mitchell")

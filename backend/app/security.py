@@ -4,7 +4,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyCookie
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import Settings, get_settings
 from .database import get_session
 from .models import Membership, Organization, PatientAccount, Role, User
+
+session_cookie = APIKeyCookie(
+    name=get_settings().session_cookie_name,
+    auto_error=False,
+    description="Signed Ambrosia session cookie",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,13 +122,13 @@ async def get_principal(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    token: Annotated[str | None, Security(session_cookie)],
 ) -> Principal:
     # Explicit test/demo header is intentionally unavailable outside demo mode.
     persona_key = request.headers.get("X-Demo-Persona")
     if persona_key and settings.demo_mode and settings.environment.lower() == "test":
         return await principal_from_persona(persona_key, session)
 
-    token = request.cookies.get(settings.session_cookie_name)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
