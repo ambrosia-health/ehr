@@ -80,6 +80,7 @@ Key invariants:
 - [Data safety and security](docs/data-safety-security.md)
 - [Functional vs simulated capabilities](docs/capabilities.md)
 - [Deployment and operations](docs/deployment.md)
+- [Performance observability and budgets](docs/performance.md)
 - [Production-readiness backlog](docs/production-readiness.md)
 
 ## Delivery commands
