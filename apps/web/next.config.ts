@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   async rewrites() {
     const configuredOrigin = process.env.AMBROSIA_API_ORIGIN;
