@@ -76,7 +76,7 @@ export function CommandCenter() {
             <Table>
               <TableHeader><TableRow><TableHead className="w-20">Time</TableHead><TableHead>Patient</TableHead><TableHead className="hidden md:table-cell">Visit</TableHead><TableHead className="hidden lg:table-cell">Readiness</TableHead><TableHead>Status</TableHead><TableHead className="w-10"><span className="sr-only">Open</span></TableHead></TableRow></TableHeader>
               <TableBody>
-                {filteredSchedule.length === 0 ? <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">{data.schedule.length === 0 ? "Named schedules are hidden in aggregate owner view." : "No appointments match this filter."}</TableCell></TableRow> : null}
+                {filteredSchedule.length === 0 ? <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">{data.schedule.length === 0 ? ownerAggregate ? "Named schedules are hidden in aggregate owner view." : "No visits are scheduled for this scenario date." : "No appointments match this filter."}</TableCell></TableRow> : null}
                 {filteredSchedule.map((appointment) => {
                   const isFeaturedPatient = Boolean(data.patient && appointment.patient === data.patient.name);
                   return (

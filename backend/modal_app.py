@@ -40,7 +40,14 @@ runtime_secret = modal.Secret.from_name("ambrosia-runtime")
 ai_internal_secret = modal.Secret.from_name("ambrosia-ai-internal")
 
 
-@app.function(image=image, secrets=[runtime_secret], timeout=300)
+@app.function(
+    image=image,
+    secrets=[runtime_secret],
+    timeout=300,
+    min_containers=1,
+    max_containers=4,
+    scaledown_window=1200,
+)
 @modal.asgi_app()
 def api():
     from app.main import app as fastapi_app

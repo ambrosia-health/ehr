@@ -79,4 +79,24 @@ describe("MsoDashboard", () => {
       for (const { metric, value, score, tone, change } of originals) Object.assign(metric, { value, score, tone, change });
     }
   });
+
+  it("only calls a metric on target when it meets the full target", () => {
+    const scoredIds = ["conversion", "noshow", "response"];
+    const originals = scoredIds.map((id) => {
+      const metric = ownerBootstrap.metrics.find((item) => item.id === id)!;
+      return { metric, score: metric.score };
+    });
+    originals[0].metric.score = 100;
+    originals[1].metric.score = 90;
+    originals[2].metric.score = 69;
+
+    try {
+      render(<MsoDashboard />);
+      expect(within(screen.getByTestId("mso-metric-conversion")).getByText("On target")).toBeVisible();
+      expect(within(screen.getByTestId("mso-metric-noshow")).getByText("Near target")).toBeVisible();
+      expect(within(screen.getByTestId("mso-metric-response")).getByText("Needs action")).toBeVisible();
+    } finally {
+      for (const { metric, score } of originals) metric.score = score;
+    }
+  });
 });

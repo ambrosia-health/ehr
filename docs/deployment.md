@@ -121,9 +121,9 @@ The script:
 4. replaces Vercel Preview/Production API origins, presenter credential, public origin, and demo-test flag;
 5. deploys both Modal environments and verifies API plus Neon readiness;
 6. calls each authenticated inference URL with a versioned prompt and fails closed unless headers identify `modal_open_weights`, the exact pinned Qwen revision, `fallback=false`, the exact prompt hash, and a schema-valid body;
-7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, and logout.
+7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.
 
-`RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. Vercel masks sensitive values on environment pull, so the provisioner runs hosted E2E before discarding the generated presenter credential instead of copying that credential to disk.
+`RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. Vercel masks sensitive values on environment pull, so the provisioner runs hosted E2E before discarding the generated presenter credential instead of copying that credential to disk. A passing hosted run leaves the canonical scenario at chapter one rather than leaving production in the completed test state.
 
 This script is an infrastructure-maintainer operation, not contributor bootstrap. Product developers and new agents use `make dev` locally and Git for hosted previews; they do not handle connection strings or platform secrets.
 
@@ -154,6 +154,8 @@ MODAL_ENVIRONMENT=staging make modal-deploy
 ```
 
 Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets, preserve API/inference pairings, update Vercel bindings, and attest both managed environments. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
+
+The domain API keeps one warm container in each managed environment (`min_containers=1`, 20-minute idle window, maximum four) so the interactive demo does not begin with a cold API boot. GPU inference still scales to zero and retains its visible deterministic fallback; this bounds idle spend without weakening the clinician approval gate.
 
 `.github/workflows/modal-deploy.yml` performs: frozen-migration checksum → install/check/test → Neon migration → tagged Modal deploy → API/database health → authenticated live-model warm-up and exact provenance/schema attestation. `main` deploys to staging; production is a manual dispatch through the `production` GitHub environment, which must have required reviewers before it is treated as a protected release boundary. CI uses the installed-CLI-compatible form `modal deploy -m <module> --env <environment> --tag <sha>`.
 

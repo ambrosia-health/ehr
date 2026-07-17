@@ -3016,7 +3016,7 @@ async def demo_bootstrap(
                     "neutral"
                     if score is None
                     else "success"
-                    if score >= 90
+                    if score >= 100
                     else "info"
                     if score >= 70
                     else "warning"
@@ -3198,6 +3198,27 @@ async def demo_bootstrap(
                     "capturedAt": dermoscopy["captured_at"],
                 },
                 "firstObserved": active_lesion["first_noted_at"],
+                "observations": [
+                    {
+                        "id": observation["id"],
+                        "observedAt": observation["observed_at"],
+                        "lengthMm": float(observation["length_mm"]),
+                        "widthMm": float(observation["width_mm"]),
+                        "morphology": observation["morphology"],
+                        "border": observation["border"],
+                        "pigmentation": observation["pigmentation"],
+                        "changeOverTime": observation["change_over_time"],
+                        "symptoms": [
+                            part.strip()
+                            for part in observation["symptoms"].split(";")
+                            if part.strip()
+                        ],
+                        "assessment": observation["assessment"],
+                        "comparison": observation.get("comparison"),
+                        "source": observation["source"],
+                    }
+                    for observation in active_lesion_bundle["observations"]
+                ],
                 "latestObservation": {
                     "id": latest_observation["id"],
                     "site": latest_observation.get("anatomical_site")
@@ -3272,7 +3293,13 @@ async def demo_bootstrap(
             "timeline": [
                 {
                     "date": observation["observed_at"],
-                    "title": "Lesion observation",
+                    "title": (
+                        "Patient baseline photograph"
+                        if observation["source"] == "patient"
+                        else "Clinician lesion examination"
+                        if observation["source"] == "clinician"
+                        else "Structured lesion observation"
+                    ),
                     "detail": observation["change_over_time"],
                     "tone": "info" if observation["source"] == "patient" else "ai",
                 }

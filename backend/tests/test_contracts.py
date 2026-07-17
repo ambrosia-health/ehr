@@ -335,12 +335,15 @@ async def test_bootstrap_serialization_and_role_scope(client) -> None:
     assert len(actionable_denials) == 1
     assert actionable_denials[0]["denial"]["assignedTaskId"]
     assert biller["financialContext"]["estimate"]["patientResponsibility"] == 85.0
-    assert {item["id"] for item in biller["metrics"]} == {
+    biller_metrics = {item["id"]: item for item in biller["metrics"]}
+    assert set(biller_metrics) == {
         "accept",
         "denial",
         "ar",
         "revenue",
     }
+    assert biller_metrics["accept"]["score"] == 90
+    assert biller_metrics["accept"]["tone"] == "info"
 
     owner = await _bootstrap(client, "owner")
     assert owner["intake"] is None

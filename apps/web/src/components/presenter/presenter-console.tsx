@@ -29,6 +29,27 @@ const chapters = [
   { number: 7, label: "MSO intelligence", href: "/mso", persona: "owner", detail: "Operating outcomes across the practice" },
 ] as const satisfies ReadonlyArray<{ number: number; label: string; href: string; persona: Persona; detail: string }>;
 
+const comparisonProofs = [
+  {
+    icon: Activity,
+    familiar: "Specialty scribe + suggested clinical actions",
+    ambrosia: "Source transcript → structured draft → exact clinician approval",
+    proof: "One review signs the note and transactionally creates eight linked downstream records.",
+  },
+  {
+    icon: Beaker,
+    familiar: "Integrated photos + body diagram",
+    ambrosia: "Persistent lesion intelligence",
+    proof: "Measurements, overview, dermoscopy, procedure, specimen, order, and result stay on one longitudinal lesion thread.",
+  },
+  {
+    icon: CircleDollarSign,
+    familiar: "Integrated PM + analytics",
+    ambrosia: "Clinical-to-financial provenance",
+    proof: "The approved clinical source drives the claim, denial evidence, payment, and source-traceable operating measures.",
+  },
+] as const;
+
 export function PresenterConsole() {
   const { setPersona } = useDemoSession();
   const { data, mode, error, refetch } = useDemoBootstrap();
@@ -140,6 +161,15 @@ export function PresenterConsole() {
           </Card>
         </div>
       </div>
+      <Card>
+        <CardHeader className="border-b"><CardTitle className="text-base">ModMed comparison moments</CardTitle><p className="text-xs leading-5 text-muted-foreground">Acknowledge the incumbent’s specialty depth, then demonstrate where Ambrosia turns separate capabilities into one accountable record.</p></CardHeader>
+        <CardContent className="grid gap-3 p-4 lg:grid-cols-3">
+          {comparisonProofs.map((item) => {
+            const Icon = item.icon;
+            return <div key={item.ambrosia} className="rounded-lg border p-4"><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"><Icon className="size-3.5 text-primary" /> Familiar pattern</div><p className="mt-2 text-xs font-medium text-muted-foreground">{item.familiar}</p><div className="my-3 h-px bg-border" /><p className="text-sm font-semibold">{item.ambrosia}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{item.proof}</p></div>;
+          })}
+        </CardContent>
+      </Card>
     </div>
   );
 }

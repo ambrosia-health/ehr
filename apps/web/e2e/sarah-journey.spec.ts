@@ -268,6 +268,16 @@ test.describe("Sarah Mitchell live demo journey", () => {
       await expect(page.getByText("Support", { exact: true }).first()).toBeVisible();
     });
 
+    await test.step("restore the hosted demo to its canonical opening state", async () => {
+      await page.goto("/presenter");
+      await expect(page.getByRole("heading", { name: "Presenter console" })).toBeVisible();
+      await page.getByTestId("presenter-rail-toggle").click();
+      await clickAndAwaitApi(page, "presenter-reset", "/api/demo/reset");
+      await expect(page).toHaveURL(/\/presenter$/);
+      await expect(page.getByText("Chapter 1 of 7")).toBeVisible();
+      await expect(page.getByText("Patient initiation", { exact: true }).first()).toBeVisible();
+    });
+
     await test.step("end the cookie session and protect browser history", async () => {
       await page.getByLabel("Switch demo persona").click();
       await clickAndAwaitApi(page, "exit-demo", "/api/auth/logout");

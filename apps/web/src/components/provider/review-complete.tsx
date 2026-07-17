@@ -85,7 +85,7 @@ export function ReviewComplete() {
   if (completionReceipt) {
     return (
       <div className="mx-auto max-w-3xl space-y-6 py-8">
-        <div className="text-center"><span className="mx-auto flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="size-7" /></span><StatusBadge tone="success" className="mt-4">Encounter complete</StatusBadge><h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">Every approved handoff is in motion.</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">The note is signed and immutable, the specimen and order are linked, aftercare is queued, the claim is drafted, and pathology closure is being tracked.</p></div>
+        <div className="text-center"><span className="mx-auto flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check className="size-7" /></span><StatusBadge tone="success" className="mt-4">One approval · eight durable records</StatusBadge><h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">Every approved handoff is in motion.</h1><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted-foreground">The note is signed and immutable, the specimen and order are linked, aftercare is queued, the claim is drafted, and pathology closure is being tracked.</p></div>
         <Card data-testid="encounter-completion-receipt"><CardContent className="grid gap-3 p-5 sm:grid-cols-2">{[
           { icon: FileLock2, title: "Note signed", detail: `${completionReceipt.noteId} · v${completionReceipt.noteVersion} · ${formatInTimeZone(completionReceipt.signedAt, data.organization.timezone, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` },
           { icon: ShieldCheck, title: "Consent linked", detail: completionReceipt.consentId },
@@ -107,7 +107,7 @@ export function ReviewComplete() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Human approval checkpoint" title="Review and complete" description="Approve the clinical, operational, financial, and patient-facing changes that will be committed as one auditable workflow." actions={<Button asChild variant="outline"><Link href="/encounters/sarah-biopsy"><ArrowLeft className="size-4" /> Back to note</Link></Button>} />
+      <PageHeader eyebrow="Human approval checkpoint" title="One clinician decision. Eight durable records." description="Review the exact clinical, operational, financial, and patient-facing changes that the domain API will commit as one auditable workflow." actions={<Button asChild variant="outline"><Link href="/encounters/sarah-biopsy"><ArrowLeft className="size-4" /> Back to note</Link></Button>} />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
           <CardHeader className="border-b pb-4"><SectionHeader title="Actions requiring approval" description={`${selected.size} of ${data.encounter.proposals.length} selected · required actions must remain selected`} action={<StatusBadge tone="ai"><Sparkles className="size-3" /> AI proposed</StatusBadge>} /></CardHeader>

@@ -25,12 +25,19 @@ describe("LoginScreen", () => {
     });
   });
 
-  it("keeps presenter authorization separate from a provider login", async () => {
+  it("offers presenter authorization only to the owner and clears it before a provider login", async () => {
     const user = userEvent.setup();
     render(<AppProviders initialPersona="provider"><LoginScreen /></AppProviders>);
+    expect(screen.queryByLabelText("Presenter access code")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("persona-owner"));
     await user.type(screen.getByLabelText("Presenter access code"), "secret");
+    await user.click(screen.getByTestId("persona-provider"));
+    expect(screen.queryByLabelText("Presenter access code")).not.toBeInTheDocument();
     await user.click(screen.getByTestId("enter-demo"));
-    expect(await screen.findByText(/starts with the MSO owner persona/i)).toBeVisible();
-    expect(fetch).not.toHaveBeenCalled();
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/command-center"));
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/auth/demo/session",
+      expect.objectContaining({ body: JSON.stringify({ persona: "provider" }) }),
+    );
   });
 });

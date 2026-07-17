@@ -164,6 +164,20 @@ export interface DemoBootstrap {
         capturedAt: string;
       };
       firstObserved: string;
+      observations?: Array<{
+        id: string;
+        observedAt: string;
+        lengthMm: number;
+        widthMm: number;
+        morphology: string;
+        border: string;
+        pigmentation: string;
+        changeOverTime: string;
+        symptoms: string[];
+        assessment: string | null;
+        comparison: string | null;
+        source: string;
+      }>;
       latestObservation: {
         id: string;
         site: string;

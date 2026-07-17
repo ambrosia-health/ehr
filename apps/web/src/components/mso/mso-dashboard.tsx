@@ -14,6 +14,13 @@ const metricGroups = [
   { label: "Revenue performance", ids: ["accept", "denial", "ar", "revenue"] },
 ] as const;
 
+function metricSignal(score: number | null): string {
+  if (score == null) return "Insufficient data";
+  if (score >= 100) return "On target";
+  if (score >= 70) return "Near target";
+  return "Needs action";
+}
+
 export function MsoDashboard() {
   const { data, mode, error, refetch } = useDemoBootstrap();
   if (mode === "loading") return <PageLoading label="Calculating MSO performance" />;
@@ -27,7 +34,7 @@ export function MsoDashboard() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="MSO intelligence" title="Practice performance" description={`Computed from durable Ambrosia records through ${asOf}. Every measure carries its supporting count, target, source, and calculation assumption.`} />
+      <PageHeader eyebrow="MSO intelligence" title="Practice performance" description={`Computed from durable Ambrosia records through ${asOf}. Every measure stays attached to its target, supporting count, source records, and calculation assumption.`} />
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="MSO summary">
         <Card><CardContent className="p-4"><div className="flex items-center justify-between"><span className="flex size-9 items-center justify-center rounded-lg bg-primary/8 text-primary"><BarChart3 className="size-4" /></span><StatusBadge tone="success">Live calculation</StatusBadge></div><p className="mt-4 font-mono text-3xl font-semibold tracking-[-0.05em]">{data.metrics.length}</p><p className="text-xs font-medium">Computed operating measures</p><p className="mt-2 text-[10px] text-muted-foreground">Returned by the MSO analytics read model</p></CardContent></Card>
@@ -50,7 +57,7 @@ export function MsoDashboard() {
                     return (
                     <Card key={metric!.id} className="overflow-hidden" data-testid={`mso-metric-${metric!.id}`} data-status={insufficientData ? "insufficient-data" : "calculated"}>
                       <CardContent className="p-4">
-                        <div className="flex items-start justify-between gap-3"><p className="text-xs font-medium text-muted-foreground">{metric!.label}</p><StatusBadge tone={insufficientData ? "neutral" : metric!.tone}><Calculator className="size-3" />{insufficientData ? "Insufficient data" : metric!.change}</StatusBadge></div>
+                        <div className="flex items-start justify-between gap-3"><p className="min-w-0 text-xs font-medium leading-4 text-muted-foreground">{metric!.label}</p><StatusBadge tone={insufficientData ? "neutral" : metric!.tone} className="shrink-0"><Calculator className="size-3" />{metricSignal(metric!.score)}</StatusBadge></div>
                         <p className="mt-4 font-mono text-2xl font-semibold tracking-[-0.04em]">{metric!.value ?? "N/A"}</p>
                         <div className="mt-4 space-y-2 border-t pt-3 text-[10px]"><div className="flex justify-between gap-3"><span className="text-muted-foreground">Target</span><span className="text-right font-medium">{metric!.target}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Support</span><span className="text-right font-medium">{metric!.supportingCount}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Source</span><span className="truncate text-right font-medium">{metric!.source}</span></div></div>
                       </CardContent>

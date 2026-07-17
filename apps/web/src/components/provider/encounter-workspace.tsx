@@ -156,6 +156,18 @@ export function EncounterWorkspace() {
   const familyHistory = data.patient.problems.find((problem) => problem.toLowerCase().includes("family history")) ?? "Reviewed";
   const codingProposal = data.encounter.proposals.find((proposal) => proposal.category.toLowerCase().includes("cod"));
   const aftercareProposal = data.encounter.proposals.find((proposal) => proposal.category.toLowerCase().includes("patient"));
+  const lesionObservations = lesion.observations ?? [];
+  const baselineObservation = lesionObservations[0];
+  const currentObservation = lesionObservations.at(-1) ?? latestObservation;
+  const lengthChange = baselineObservation ? currentObservation.lengthMm - baselineObservation.lengthMm : null;
+  const widthChange = baselineObservation ? currentObservation.widthMm - baselineObservation.widthMm : null;
+  const connectedThread = [
+    { label: "Intake ready", detail: "History + coverage", complete: true, current: false },
+    { label: "Lesion evidence", detail: `${lesionObservations.length || 1} observations + 2 images`, complete: true, current: false },
+    { label: "Clinician review", detail: noteLocked ? "Signed record" : `${selectedProposals.size} actions to review`, complete: noteLocked, current: !noteLocked },
+    { label: "Durable actions", detail: encounter.completionReceipt ? "8 linked records" : "Awaiting approval", complete: Boolean(encounter.completionReceipt), current: noteLocked && !encounter.completionReceipt },
+    { label: "Pathology closure", detail: !noteLocked ? "Created on approval" : data.pathology.status === "notified" ? "Patient notified" : data.pathology.status === "pending" ? "Safety task pending" : "Result in review", complete: data.pathology.status === "notified", current: noteLocked && data.pathology.status !== "notified" },
+  ];
 
   function updateObservation(next: Partial<ObservationForm>) {
     setObservationOverride((current) => ({ ...(current ?? persistedObservation), ...next }));
@@ -212,6 +224,26 @@ export function EncounterWorkspace() {
 
       {!providerCanMutate ? <Alert className="border-sky-200 bg-sky-50" data-testid="clinical-read-only"><ShieldCheck className="size-4 text-sky-700" /><AlertTitle>Coordinator view</AlertTitle><AlertDescription>You can review the encounter, images, and workflow status. Note edits, clinical approvals, and lesion observations require the assigned provider.</AlertDescription></Alert> : null}
 
+      <Card className="overflow-hidden border-primary/20" data-testid="connected-care-thread">
+        <CardContent className="p-0">
+          <div className="flex flex-col gap-1 border-b bg-primary/[0.035] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><p className="text-xs font-semibold">One connected care thread</p><p className="text-[11px] text-muted-foreground">Every step stays attached to Sarah, this lesion, and the accountable next action.</p></div>
+            <StatusBadge tone="info">Patient → lesion → result → claim</StatusBadge>
+          </div>
+          <div className="grid md:grid-cols-5">
+            {connectedThread.map((step, index) => (
+              <div key={step.label} className="relative border-b px-4 py-3 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0">
+                <div className="flex items-center gap-2">
+                  <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full border font-mono text-[9px]", step.complete ? "border-emerald-600 bg-emerald-600 text-white" : step.current ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground")}>{step.complete ? <Check className="size-3" /> : index + 1}</span>
+                  <p className="text-[11px] font-semibold">{step.label}</p>
+                </div>
+                <p className="mt-1 pl-7 text-[10px] text-muted-foreground">{step.detail}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 2xl:grid-cols-[260px_minmax(0,1fr)_340px]">
         <aside className="space-y-4">
           <Card><CardHeader className="pb-3"><SectionHeader title="Patient context" action={<StatusBadge tone="success">{data.patient.readiness}% ready</StatusBadge>} /></CardHeader><CardContent className="space-y-3 text-xs"><div className="flex justify-between"><span className="text-muted-foreground">Age</span><span>{data.patient.age}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Allergy</span><span className="text-right">{data.patient.allergies[0] ?? "None recorded"}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Family history</span><span className="text-right">{familyHistory}</span></div><div className="flex justify-between gap-3"><span className="text-muted-foreground">Coverage</span><span className="text-right">{data.patient.insurance}</span></div><Separator /><p className="leading-5 text-muted-foreground">{data.encounter.previsitSummary}</p></CardContent></Card>
@@ -250,7 +282,45 @@ export function EncounterWorkspace() {
             </TabsContent>
 
             <TabsContent value="images" className="mt-0">
-              <Card><CardHeader className="border-b pb-3"><SectionHeader title="Clinical image review" description={`Both synthetic images are linked to ${lesion.id} and retain file provenance.`} /></CardHeader><CardContent className="grid gap-5 p-5 md:grid-cols-2"><figure><div className="relative aspect-[3/2] overflow-hidden rounded-lg border bg-muted"><Image src={lesion.overviewImage.url} alt="Synthetic overview clinical photograph of Sarah Mitchell’s left posterior shoulder lesion" fill className="object-cover" sizes="(max-width: 768px) 100vw, 500px" priority /></div><figcaption className="mt-2 flex items-center justify-between text-xs"><span><span className="font-semibold">Overview</span><span className="block text-[10px] text-muted-foreground">{formatInTimeZone(lesion.overviewImage.capturedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })} · {lesion.overviewImage.id}</span></span><StatusBadge tone="success">Linked</StatusBadge></figcaption></figure><figure><div className="relative aspect-square overflow-hidden rounded-lg border bg-muted"><Image src={lesion.dermoscopyImage.url} alt="Synthetic dermoscopic view of Sarah Mitchell’s pigmented left posterior shoulder lesion" fill className="object-cover" sizes="(max-width: 768px) 100vw, 500px" /></div><figcaption className="mt-2 flex items-center justify-between text-xs"><span><span className="font-semibold">Dermoscopy</span><span className="block text-[10px] text-muted-foreground">{formatInTimeZone(lesion.dermoscopyImage.capturedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })} · {lesion.dermoscopyImage.id}</span></span><StatusBadge tone="ai">AI features proposed</StatusBadge></figcaption></figure></CardContent></Card>
+              <Card>
+                <CardHeader className="border-b pb-3"><SectionHeader title="Longitudinal lesion review" description={`Clinical overview, dermoscopy, and ${lesionObservations.length || 1} durable observations remain attached to one lesion record.`} action={<StatusBadge tone="success">Site-linked</StatusBadge>} /></CardHeader>
+                <CardContent className="space-y-5 p-5">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <figure>
+                      <div className="relative aspect-[3/2] overflow-hidden rounded-lg border bg-muted"><Image src={lesion.overviewImage.url} alt="Synthetic overview clinical photograph of Sarah Mitchell’s left posterior shoulder lesion" fill className="object-cover" sizes="(max-width: 1024px) 100vw, 520px" priority /></div>
+                      <figcaption className="mt-2 flex items-start justify-between gap-3 text-xs"><span><span className="font-semibold">Clinical overview</span><span className="block text-[10px] text-muted-foreground">{formatInTimeZone(lesion.overviewImage.capturedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })} · {lesion.overviewImage.id}</span></span><StatusBadge tone="success">File verified</StatusBadge></figcaption>
+                    </figure>
+                    <figure>
+                      <div className="relative aspect-[3/2] overflow-hidden rounded-lg border bg-black"><Image src={lesion.dermoscopyImage.url} alt="Synthetic dermoscopic view of Sarah Mitchell’s pigmented left posterior shoulder lesion" fill className="object-contain" sizes="(max-width: 1024px) 100vw, 520px" /></div>
+                      <figcaption className="mt-2 flex items-start justify-between gap-3 text-xs"><span><span className="font-semibold">Dermoscopy · same lesion</span><span className="block text-[10px] text-muted-foreground">{formatInTimeZone(lesion.dermoscopyImage.capturedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })} · {lesion.dermoscopyImage.id}</span></span><StatusBadge tone="ai">Features proposed</StatusBadge></figcaption>
+                    </figure>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-[1.05fr_1fr]">
+                    <div className="rounded-lg border bg-muted/25 p-4">
+                      <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold">Measured change over time</p><StatusBadge tone="warning">Clinician review</StatusBadge></div>
+                      {baselineObservation ? <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                        <div><p className="font-mono text-xl font-semibold">{baselineObservation.lengthMm} × {baselineObservation.widthMm} mm</p><p className="mt-1 text-[10px] text-muted-foreground">Patient baseline · {formatInTimeZone(baselineObservation.observedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })}</p></div>
+                        <ArrowRight className="size-4 text-muted-foreground" />
+                        <div className="text-right"><p className="font-mono text-xl font-semibold">{currentObservation.lengthMm} × {currentObservation.widthMm} mm</p><p className="mt-1 text-[10px] text-muted-foreground">Clinician exam · {formatInTimeZone(currentObservation.observedAt, data.organization.timezone, { month: "short", day: "numeric", year: "numeric" })}</p></div>
+                      </div> : <p className="mt-3 text-xs text-muted-foreground">No comparable baseline measurement is available.</p>}
+                      <div className="mt-4 flex flex-wrap gap-2"><StatusBadge tone="warning">Length {lengthChange == null ? "—" : `${lengthChange >= 0 ? "+" : ""}${lengthChange.toFixed(1)} mm`}</StatusBadge><StatusBadge tone="warning">Width {widthChange == null ? "—" : `${widthChange >= 0 ? "+" : ""}${widthChange.toFixed(1)} mm`}</StatusBadge></div>
+                      <p className="mt-3 text-xs leading-5 text-muted-foreground">{currentObservation.changeOverTime}</p>
+                    </div>
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs font-semibold">Structured dermoscopy context</p>
+                      <dl className="mt-3 grid gap-x-4 gap-y-3 text-xs sm:grid-cols-2">
+                        <div><dt className="text-[10px] text-muted-foreground">Morphology</dt><dd className="mt-0.5 font-medium">{currentObservation.morphology}</dd></div>
+                        <div><dt className="text-[10px] text-muted-foreground">Border</dt><dd className="mt-0.5 font-medium">{currentObservation.border}</dd></div>
+                        <div><dt className="text-[10px] text-muted-foreground">Pigment</dt><dd className="mt-0.5 font-medium">{currentObservation.pigmentation}</dd></div>
+                        <div><dt className="text-[10px] text-muted-foreground">Symptoms</dt><dd className="mt-0.5 font-medium">{currentObservation.symptoms.join(", ") || "None recorded"}</dd></div>
+                      </dl>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 border-t pt-4 text-[10px] text-muted-foreground"><Camera className="size-3.5 text-primary" /><span className="font-medium text-foreground">Clinical overview</span><ArrowRight className="size-3" /><span className="font-mono">{lesion.id}</span><ArrowRight className="size-3" /><span className="font-mono">{encounter.id}</span><ArrowRight className="size-3" /><span>{noteLocked ? "Specimen + pathology order linked" : "Specimen + order created on approval"}</span></div>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="lesion" className="mt-0">
@@ -261,7 +331,7 @@ export function EncounterWorkspace() {
 
         <aside className="space-y-4">
           <Card className="sticky top-20 border-violet-200/80">
-            <CardHeader className="border-b bg-violet-50/45 pb-3"><SectionHeader title={noteLocked ? "Recorded actions" : "Proposed actions"} description={noteLocked ? "The encounter is complete; these actions are no longer editable." : "Nothing changes the chart until clinician approval."} action={<StatusBadge tone={noteLocked ? "success" : "ai"}><BrainCircuit className="size-3" /> {selectedProposals.size}</StatusBadge>} /></CardHeader>
+            <CardHeader className="border-b bg-violet-50/45 pb-3"><SectionHeader title={noteLocked ? "One review · actions recorded" : `One review → ${selectedProposals.size} linked actions`} description={noteLocked ? "Every approved handoff is durable and no longer editable here." : "Nothing changes the chart until clinician approval."} action={<StatusBadge tone={noteLocked ? "success" : "ai"}><BrainCircuit className="size-3" /> {selectedProposals.size}</StatusBadge>} /></CardHeader>
             <CardContent className="space-y-2 p-3">
               {data.encounter.proposals.map((proposal) => (
                 <label key={proposal.id} className={cn("flex gap-3 rounded-lg border p-3", !noteLocked && providerCanMutate && "cursor-pointer", selectedProposals.has(proposal.id) && "border-violet-200 bg-violet-50/50")}>

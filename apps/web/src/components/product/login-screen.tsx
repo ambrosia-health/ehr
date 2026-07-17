@@ -61,6 +61,10 @@ export function LoginScreen() {
     if (sessionLifecycle === "ended") queryClient.removeQueries({ queryKey: demoBootstrapQueryKey });
   }, [queryClient, sessionLifecycle]);
 
+  useEffect(() => {
+    if (selectedPersona !== "owner") form.setValue("presenterCode", "", { shouldDirty: false });
+  }, [form, selectedPersona]);
+
   async function submit(values: LoginValues) {
     setSubmitting(true);
     setMessage(null);
@@ -97,8 +101,8 @@ export function LoginScreen() {
           </div>
           <div className="mt-10">
             <StatusBadge tone="success">Synthetic demo environment</StatusBadge>
-            <h1 className="mt-4 max-w-xl text-balance text-3xl font-semibold tracking-[-0.045em] sm:text-4xl">One calm operating system for every dermatology workflow.</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">Choose a persona to follow Sarah Mitchell from a changing mole through documentation, pathology closure, payment, and practice-level performance.</p>
+            <h1 className="mt-4 max-w-xl text-balance text-3xl font-semibold tracking-[-0.045em] sm:text-4xl">One continuous record from changing lesion to closed loop.</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">Follow Sarah Mitchell across patient access, a dermatologist-reviewed encounter, pathology safety, payment, and practice performance—without losing the clinical thread.</p>
           </div>
 
           <form className="mt-8 space-y-6" onSubmit={form.handleSubmit(submit)}>
@@ -113,7 +117,7 @@ export function LoginScreen() {
                       key={persona.id}
                       type="button"
                       className={cn("flex items-center gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", selected ? "border-primary bg-primary/6" : "bg-background hover:bg-muted/60")}
-                      onClick={() => form.setValue("persona", persona.id)}
+                      onClick={() => form.setValue("persona", persona.id, { shouldDirty: true })}
                       aria-pressed={selected}
                       data-testid={`persona-${persona.id}`}
                     >
@@ -125,12 +129,12 @@ export function LoginScreen() {
               </div>
             </fieldset>
 
-            <div className="rounded-lg border bg-muted/30 p-4">
+            {selectedPersona === "owner" ? <div className="rounded-lg border bg-muted/30 p-4">
               <div className="flex items-center gap-2 text-xs font-semibold"><LockKeyhole className="size-3.5" /> Presenter access <span className="font-normal text-muted-foreground">(optional)</span></div>
               <Label htmlFor="presenter-code" className="sr-only">Presenter access code</Label>
-              <Input id="presenter-code" className="mt-3 bg-background" type="password" placeholder="Access code" autoComplete="current-password" {...form.register("presenterCode")} />
-              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Presenter authorization is a separate capability validated only by the domain API.</p>
-            </div>
+              <Input id="presenter-code" className="mt-3 bg-background" type="password" placeholder="Access code" autoComplete="one-time-code" {...form.register("presenterCode")} />
+              <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Unlocks persona switching, canonical reset, simulated events, and service health. The domain API validates this separate capability.</p>
+            </div> : null}
 
             {message ? <Alert variant="destructive"><ShieldCheck className="size-4" /><AlertTitle>Session not started</AlertTitle><AlertDescription>{message}</AlertDescription></Alert> : null}
             <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={submitting} data-testid="enter-demo">
@@ -140,10 +144,10 @@ export function LoginScreen() {
         </section>
 
         <aside className="relative hidden overflow-hidden border-l bg-primary p-10 text-primary-foreground lg:flex lg:flex-col lg:justify-between">
-          <div className="absolute -right-20 -top-20 size-72 rounded-full border border-white/10" />
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-primary-foreground/70"><Sparkles className="size-4" /> Today’s demo</div>
             <h2 className="mt-5 text-3xl font-semibold tracking-[-0.04em]">From concern to closure—with every handoff visible.</h2>
+            <p className="mt-3 text-sm leading-6 text-primary-foreground/70">One clinician review creates the signed note, procedure, specimen, order, aftercare, claim, and closure task as linked records.</p>
           </div>
           <ol className="space-y-0">
             {["Patient starts a lesion visit", "AI prepares the encounter", "Clinician reviews every proposal", "Pathology closes the loop", "RCM recovers revenue", "MSO sees operating leverage"].map((chapter, index) => (

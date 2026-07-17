@@ -41,6 +41,13 @@ function claimTone(status: DemoBootstrap["claims"][number]["status"]): StatusTon
   return "neutral";
 }
 
+function metricSignal(score: number | null): string {
+  if (score == null) return "Insufficient data";
+  if (score >= 100) return "On target";
+  if (score >= 70) return "Near target";
+  return "Needs action";
+}
+
 export function RcmWorkspace() {
   const { data, mode, error, refetch } = useDemoBootstrap();
   if (mode === "loading") return <PageLoading label="Loading revenue cycle" />;
@@ -53,6 +60,7 @@ export function RcmWorkspace() {
   const revenueVisit = data.metrics.find((metric) => metric.id === "revenue");
   const workQueue = data.queues.find((queue) => queue.id === "claims");
   const activeDenials = data.claims.filter((claim) => claim.denial?.status === "open");
+  const attentionClaims = data.claims.filter((claim) => claim.status === "draft" || claim.status === "denied");
   const atRisk = activeDenials.reduce((sum, claim) => sum + (claim.denial?.recoverable ?? 0), 0);
   const recoveredRevenue = data.claims.reduce((sum, claim) => sum + (claim.denial?.recovery?.recoveredAmount ?? 0), 0);
   const financial = data.financialContext;
@@ -62,14 +70,14 @@ export function RcmWorkspace() {
     <div className="space-y-6">
       <PageHeader eyebrow="Financial operations" title="Revenue cycle" description="Eligibility, documentation, claims, remittance, and patient responsibility remain connected to the clinical source record." />
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Revenue cycle metrics">
-        {[acceptance, denialRate, daysAr, revenueVisit].filter(Boolean).map((metric) => <Card key={metric!.id}><CardContent className="p-4"><div className="flex items-center justify-between"><p className="text-xs font-medium text-muted-foreground">{metric!.label}</p><StatusBadge tone={metric!.tone}>{metric!.change}</StatusBadge></div><p className="mt-4 font-mono text-2xl font-semibold tracking-[-0.04em]">{metric!.value}</p><p className="mt-2 text-[10px] text-muted-foreground">Target {metric!.target} · {metric!.supportingCount}</p></CardContent></Card>)}
+        {[acceptance, denialRate, daysAr, revenueVisit].filter(Boolean).map((metric) => <Card key={metric!.id}><CardContent className="p-4"><div className="flex items-start justify-between gap-3"><p className="min-w-0 text-xs font-medium leading-4 text-muted-foreground">{metric!.label}</p><StatusBadge tone={metric!.score == null ? "neutral" : metric!.tone} className="shrink-0">{metricSignal(metric!.score)}</StatusBadge></div><p className="mt-4 font-mono text-2xl font-semibold tracking-[-0.04em]">{metric!.value ?? "N/A"}</p><p className="mt-2 text-[10px] leading-4 text-muted-foreground">Target {metric!.target}</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">{metric!.supportingCount}</p></CardContent></Card>)}
       </section>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.65fr)]">
         <Card className="overflow-hidden">
-          <CardHeader className="border-b pb-4"><SectionHeader title="Claims requiring attention" description="Clinical and payer context together—without document scavenger hunts." action={<StatusBadge tone={workQueue?.tone}>{workQueue?.count ?? data.claims.length} open</StatusBadge>} /></CardHeader>
+          <CardHeader className="border-b pb-4"><SectionHeader title="Claims requiring attention" description="Only claims with a current action—not already-paid history." action={<StatusBadge tone={attentionClaims.length ? workQueue?.tone : "success"}>{attentionClaims.length} open</StatusBadge>} /></CardHeader>
           <CardContent className="p-0">
-            <Table><TableHeader><TableRow><TableHead>Claim</TableHead><TableHead>Patient / payer</TableHead><TableHead className="hidden md:table-cell">Codes</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead className="w-10"><span className="sr-only">Open</span></TableHead></TableRow></TableHeader><TableBody>{data.claims.map((claim) => <TableRow key={claim.id}><TableCell className="font-mono text-xs">{claim.claimNumber}</TableCell><TableCell><p className="text-xs font-semibold">{claim.patient}</p><p className="text-[10px] text-muted-foreground">{claim.payer}</p></TableCell><TableCell className="hidden md:table-cell"><div className="flex max-w-44 flex-wrap gap-1">{claim.codes.map((code) => <StatusBadge key={code} className="font-mono text-[9px]">{code}</StatusBadge>)}</div></TableCell><TableCell className="font-mono text-xs">{currency.format(claim.amount)}</TableCell><TableCell><StatusBadge tone={claimTone(claim.status)}>{claim.status}</StatusBadge></TableCell><TableCell><Button asChild variant="ghost" size="icon-sm"><Link href={claim.denial ? "/rcm/denials" : `/rcm/claims/${claim.id}`} aria-label={`Open claim ${claim.claimNumber}`}><ChevronRight /></Link></Button></TableCell></TableRow>)}</TableBody></Table>
+            <Table><TableHeader><TableRow><TableHead>Claim</TableHead><TableHead>Patient / payer</TableHead><TableHead className="hidden md:table-cell">Codes</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead className="w-10"><span className="sr-only">Open</span></TableHead></TableRow></TableHeader><TableBody>{attentionClaims.length === 0 ? <TableRow><TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">No claims require action. Paid and accepted claims remain available in their durable history.</TableCell></TableRow> : null}{attentionClaims.map((claim) => <TableRow key={claim.id}><TableCell className="font-mono text-xs">{claim.claimNumber}</TableCell><TableCell><p className="text-xs font-semibold">{claim.patient}</p><p className="text-[10px] text-muted-foreground">{claim.payer}</p></TableCell><TableCell className="hidden md:table-cell"><div className="flex max-w-44 flex-wrap gap-1">{claim.codes.map((code) => <StatusBadge key={code} className="font-mono text-[9px]">{code}</StatusBadge>)}</div></TableCell><TableCell className="font-mono text-xs">{currency.format(claim.amount)}</TableCell><TableCell><StatusBadge tone={claimTone(claim.status)}>{claim.status}</StatusBadge></TableCell><TableCell><Button asChild variant="ghost" size="icon-sm"><Link href={claim.denial ? "/rcm/denials" : `/rcm/claims/${claim.id}`} aria-label={`Open claim ${claim.claimNumber}`}><ChevronRight /></Link></Button></TableCell></TableRow>)}</TableBody></Table>
           </CardContent>
         </Card>
 
