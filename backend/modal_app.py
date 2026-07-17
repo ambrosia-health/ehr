@@ -44,9 +44,7 @@ ai_internal_secret = modal.Secret.from_name("ambrosia-ai-internal")
     image=image,
     secrets=[runtime_secret],
     timeout=300,
-    min_containers=1,
     max_containers=4,
-    scaledown_window=1200,
 )
 @modal.asgi_app()
 def api():
@@ -60,7 +58,6 @@ def api():
     gpu="T4",
     timeout=120,
     startup_timeout=300,
-    scaledown_window=900,
     max_containers=2,
 )
 class StructuredClinicalModel:

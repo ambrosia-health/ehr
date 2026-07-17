@@ -8,30 +8,28 @@ on:
       - "Makefile"
       - ".github/workflows/modal-deploy.yml"
   workflow_dispatch:
-    inputs:
-      target:
-        description: Modal/GitHub environment to deploy
-        required: true
-        default: staging
-        type: choice
-        options:
-          - staging
-          - production
 
 permissions:
   contents: read
-
-concurrency:
-  group: modal-${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
-  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - modal_environment: main
+            github_environment: production
+          - modal_environment: staging
+            github_environment: staging
+    concurrency:
+      group: modal-${{ matrix.modal_environment }}
+      cancel-in-progress: false
+    environment: ${{ matrix.github_environment }}
     env:
-      MODAL_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'staging' }}
+      MODAL_ENVIRONMENT: ${{ matrix.modal_environment }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       NEON_DATABASE_URL_DIRECT: ${{ secrets.NEON_DATABASE_URL_DIRECT }}

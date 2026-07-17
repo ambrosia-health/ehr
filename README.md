@@ -17,11 +17,11 @@ The browser never connects to Neon. Vercel contains presentation and same-origin
 
 ## Managed synthetic deployment
 
-The hosted demo is live at [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Vercel project `ambrosia-ehr` is linked natively to `ambrosia-health/ehr`, uses `apps/web` as its Root Directory, and creates branch/PR previews without a repository-managed Vercel token. The same-origin API targets Modal `staging` for previews and Modal `production` for the production alias; both persist only synthetic data in managed Neon branches.
+The hosted demo is live at [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Vercel project `ambrosia-ehr` is linked natively to `ambrosia-health/ehr`, uses `apps/web` as its Root Directory, and creates branch/PR previews without a repository-managed Vercel token. The same-origin API targets Modal `staging` for previews and the workspace-visible Modal `main` environment for the production alias; both persist only synthetic data in isolated managed Neon branches.
 
 Structured AI inference runs on a T4 with `Qwen/Qwen2.5-0.5B-Instruct` pinned to revision `7ae557604adf67be50417f59c2c2f167def9a775`. The internal endpoint requires a separate service secret, verifies prompt provenance, and accepts output only after capability-specific schema and semantic validation. Timeout, cold-start, malformed, unsupported, or unsafe output selects a visibly labeled deterministic fallback through the same proposal and human-approval path.
 
-Normal product work needs no hosted credentials. Authorized platform operators can rerun [`scripts/provision-managed-infra.sh`](scripts/provision-managed-infra.sh) to reconcile Neon migrations/seed invariants, rotate and synchronize platform secrets, bind Vercel environments, deploy both Modal environments, and fail closed unless API/database health, exact live-model provenance, output-schema validation, and the hosted seven-chapter Sarah journey pass. Resource IDs and operating details are recorded in [deployment and operations](docs/deployment.md).
+Normal product work needs no hosted credentials. Authorized platform operators can rerun [`scripts/provision-managed-infra.sh`](scripts/provision-managed-infra.sh) to reconcile Neon migrations/seed invariants, rotate and synchronize platform secrets, bind Vercel environments, deploy Modal `main` and `staging`, and fail closed unless API/database health, exact live-model provenance, output-schema validation, and the hosted seven-chapter Sarah journey pass. Resource IDs and operating details are recorded in [deployment and operations](docs/deployment.md).
 
 ## Local development
 
@@ -88,6 +88,7 @@ Vercel's native Git integration creates previews for branches/PRs and deploys `m
 
 ```bash
 make modal-serve
+MODAL_ENVIRONMENT=main make modal-deploy
 MODAL_ENVIRONMENT=staging make modal-deploy
 ```
 

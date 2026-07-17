@@ -45,12 +45,12 @@ ambrosia-db verify
 
 ## Managed hosted runtime
 
-Modal environments `staging` and `production` expose the domain API at:
+Modal environments `main` and `staging` expose the domain API at:
 
+- `https://kshr-ai--ambrosia-health-domain-api-api.modal.run`
 - `https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run`
-- `https://kshr-ai-production--ambrosia-health-domain-api-api.modal.run`
 
-Their structured-inference boundaries are `https://kshr-ai-staging--structured-inference.modal.run` and `https://kshr-ai-production--structured-inference.modal.run`. Those URLs are not browser APIs: every request requires the environment-specific `X-Ambrosia-Internal` secret and a versioned prompt whose SHA-256 matches its template.
+Their structured-inference boundaries are `https://kshr-ai--structured-inference.modal.run` and `https://kshr-ai-staging--structured-inference.modal.run`. Those URLs are not browser APIs: every request requires the environment-specific `X-Ambrosia-Internal` secret and a versioned prompt whose SHA-256 matches its template.
 
 Inference uses `Qwen/Qwen2.5-0.5B-Instruct` at immutable revision `7ae557604adf67be50417f59c2c2f167def9a775` on a Modal T4. Generated JSON is parsed into the capability schema and then checked against semantic safety rules before it can be recorded as a live proposal. Failures use `ambrosia-fixture-2026.1`, set fallback provenance, and retain the same human gate.
 

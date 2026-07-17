@@ -9,7 +9,7 @@ This runbook preserves the three-platform boundary: Vercel hosts Next.js, Modal 
 | Local | Next.js dev on `:3000` | same FastAPI app under Uvicorn on `:8000` | SQLite zero-credential default; optional Docker Postgres 16 | canonical synthetic seed; deterministic provider adapters; local AI fallback |
 | Preview | native Vercel branch/PR Preview | managed Modal `staging` API | managed synthetic Neon `staging`; `preview` branch reserved for isolated migration/verification work | deterministic networks; authenticated pinned open-weights AI with deterministic fallback |
 | Staging | Vercel preview surface | managed Modal `staging` | isolated synthetic Neon `staging` branch | production-like demo configuration; no live provider credentials/data |
-| Production | Vercel Production alias | managed Modal `production` | isolated synthetic Neon `main` branch | publicly hosted synthetic demo; every real-world P0 gate remains open until separately evidenced |
+| Production | Vercel Production alias | managed Modal `main` | isolated synthetic Neon `main` branch | publicly hosted synthetic demo; every real-world P0 gate remains open until separately evidenced |
 
 Never point a preview at the hosted-production Neon branch or any live provider credential. Keep synthetic branches, session keys, and Modal Secrets environment-bound; real-data use requires the stronger account/project/database/role isolation selected by the production threat model. `NEXT_PUBLIC_*` values are visible to anyone; only the public app URL belongs there.
 
@@ -21,8 +21,8 @@ Identifiers and URLs below are operational metadata, not credentials. Connection
 |---|---|---|
 | Vercel | project `ambrosia-ehr`, ID `prj_ad1AsXV5muySOAyBsxMgcKAj1SVa` | repository `ambrosia-health/ehr`; Root Directory `apps/web`; production branch `main`; canonical site [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app); native Git previews enabled |
 | Neon | project `ambrosia-ehr`, ID `round-cloud-23718842`; database `ambrosia` | `main` / `br-still-wildflower-aunolqvx` (hosted production demo), `staging` / `br-rough-feather-auv415ro`, `preview` / `br-lingering-queen-au7d3n4t` |
+| Modal main | environment `main`, app `ambrosia-health-domain-api` | API `https://kshr-ai--ambrosia-health-domain-api-api.modal.run`; authenticated inference `https://kshr-ai--structured-inference.modal.run`; dashboard [deployment](https://modal.com/apps/kshr-ai/main/deployed/ambrosia-health-domain-api) |
 | Modal staging | environment `staging`, app `ambrosia-health-domain-api` | API `https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run`; authenticated inference `https://kshr-ai-staging--structured-inference.modal.run` |
-| Modal production | environment `production`, app `ambrosia-health-domain-api` | API `https://kshr-ai-production--ambrosia-health-domain-api-api.modal.run`; authenticated inference `https://kshr-ai-production--structured-inference.modal.run` |
 
 The inference URLs reject requests without the matching environment-specific `X-Ambrosia-Internal` secret. They must never be called directly from browser code or treated as anonymous model APIs.
 
@@ -99,9 +99,9 @@ The current `backend.modal_app` contract is deliberately small:
 | `NEON_DATABASE_URL_DIRECT` | protected migration job; environment-specific |
 | `MODAL_API_HEALTH_URL` | post-deploy authenticated/non-sensitive health endpoint URL |
 | `MODAL_AI_URL`, `MODAL_INTERNAL_AUTH_SECRET` | authenticated live-model attestation after deploy |
-| `PRESENTER_ACCESS_CODE` | protected integrated demo/E2E access; synchronized separately into Vercel |
+| `PRESENTER_ACCESS_CODE` | protected hosted demo/E2E access retained only in platform secret stores and provisioner process memory |
 
-GitHub `staging` and `production` environments are provisioned and environment-specific. Enforce required reviewers before treating the latter as a controlled release boundary. Restrict deployment credentials to service identities, rotate them, and never echo credential-bearing URLs or environment files. Native Vercel Git deployment does **not** require `VERCEL_TOKEN` in GitHub.
+GitHub `staging` and `production` environments are provisioned and environment-specific; the latter carries the secrets for Modal `main` and the hosted Vercel production alias. Enforce required reviewers before treating it as a controlled release boundary. Restrict deployment credentials to service identities, rotate them, and never echo credential-bearing URLs or environment files. Native Vercel Git deployment does **not** require `VERCEL_TOKEN` in GitHub.
 
 ## Managed reconciliation and attestation
 
@@ -118,8 +118,8 @@ The script:
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
 3. replaces Modal runtime/internal secrets and matching GitHub environment secrets;
-4. replaces Vercel Preview/Production API origins, presenter credential, public origin, and demo-test flag;
-5. deploys both Modal environments and verifies API plus Neon readiness;
+4. replaces Vercel Preview/Production API origins, public origin, and demo-test flag;
+5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
 6. calls each authenticated inference URL with a versioned prompt and fails closed unless headers identify `modal_open_weights`, the exact pinned Qwen revision, `fallback=false`, the exact prompt hash, and a schema-valid body;
 7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.
 
@@ -129,7 +129,7 @@ This script is an infrastructure-maintainer operation, not contributor bootstrap
 
 ## Vercel preview
 
-The Vercel project is already linked to GitHub with Root Directory `apps/web`. A branch/PR push creates one native Vercel Preview; a `main` push creates a Production deployment. Preview server traffic rewrites to Modal staging, while the Production alias rewrites to Modal production.
+The Vercel project is already linked to GitHub with Root Directory `apps/web`. A branch/PR push creates one native Vercel Preview; a `main` push creates a Production deployment. Preview server traffic rewrites to Modal `staging`, while the Production alias rewrites to Modal `main`.
 
 `.github/workflows/vercel-preview.yml` has two responsibilities and no deployment credential:
 
@@ -140,7 +140,7 @@ Require repository checks before merge and validate authentication/role policy, 
 
 ## Modal development and deployment
 
-Official Modal CLI behavior: `modal serve` hot-reloads web functions and `modal deploy` creates/updates a persistent app. The managed `staging` and `production` environments already contain `ambrosia-runtime` and the narrower `ambrosia-ai-internal` secret. The current repository wrapper is addressed by `MODAL_APP_MODULE`.
+Official Modal CLI behavior: `modal serve` hot-reloads web functions and `modal deploy` creates/updates a persistent app. The managed `main` and `staging` environments contain `ambrosia-runtime` and the narrower `ambrosia-ai-internal` secret. The current repository wrapper is addressed by `MODAL_APP_MODULE`.
 
 ```bash
 # Authenticates the developer CLI once; do not use personal credentials in CI.
@@ -150,14 +150,15 @@ Official Modal CLI behavior: `modal serve` hot-reloads web functions and `modal 
 MODAL_ENVIRONMENT=dev make modal-serve
 
 # Tested persistent deployment.
+MODAL_ENVIRONMENT=main make modal-deploy
 MODAL_ENVIRONMENT=staging make modal-deploy
 ```
 
 Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets, preserve API/inference pairings, update Vercel bindings, and attest both managed environments. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
 
-The domain API keeps one warm container in each managed environment (`min_containers=1`, 20-minute idle window, maximum four) so the interactive demo does not begin with a cold API boot. GPU inference still scales to zero and retains its visible deterministic fallback; this bounds idle spend without weakening the clinician approval gate.
+The domain API and GPU inference use Modal's scale-to-zero defaults. A cold start may select the visible deterministic inference fallback; live and fallback proposals retain the same schema validation and clinician approval gate.
 
-`.github/workflows/modal-deploy.yml` performs: frozen-migration checksum → install/check/test → Neon migration → tagged Modal deploy → API/database health → authenticated live-model warm-up and exact provenance/schema attestation. `main` deploys to staging; production is a manual dispatch through the `production` GitHub environment, which must have required reviewers before it is treated as a protected release boundary. CI uses the installed-CLI-compatible form `modal deploy -m <module> --env <environment> --tag <sha>`.
+`.github/workflows/modal-deploy.yml` performs this gate independently for Modal `main` and `staging`: frozen-migration checksum → install/check/test → Neon migration → tagged deploy → API/database health → authenticated live-model invocation and exact provenance/schema attestation. Every repository `main` push and manual dispatch reconciles both environments; Vercel production uses Modal `main`, while previews use `staging`. CI uses the installed-CLI-compatible form `modal deploy -m <module> --env <environment> --tag <sha>`.
 
 ## Release ordering
 

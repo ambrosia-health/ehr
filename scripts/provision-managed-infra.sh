@@ -7,15 +7,15 @@ cd "$ROOT"
 NEON_PROJECT_ID="round-cloud-23718842"
 NEON_DATABASE="ambrosia"
 NEON_ROLE="ambrosia_owner"
+MAIN_BRANCH="br-still-wildflower-aunolqvx"
 STAGING_BRANCH="br-rough-feather-auv415ro"
-PRODUCTION_BRANCH="br-still-wildflower-aunolqvx"
 GITHUB_REPOSITORY="ambrosia-health/ehr"
 VERCEL_ORG_ID="team_NWSCGbaTw7YBdtMacOBB2f2D"
 VERCEL_PROJECT_ID="prj_ad1AsXV5muySOAyBsxMgcKAj1SVa"
+MAIN_API="https://kshr-ai--ambrosia-health-domain-api-api.modal.run"
+MAIN_AI="https://kshr-ai--structured-inference.modal.run"
 STAGING_API="https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run"
 STAGING_AI="https://kshr-ai-staging--structured-inference.modal.run"
-PRODUCTION_API="https://kshr-ai-production--ambrosia-health-domain-api-api.modal.run"
-PRODUCTION_AI="https://kshr-ai-production--structured-inference.modal.run"
 WEB_ORIGIN="https://ambrosia-ehr.vercel.app"
 
 for command in gh neonctl node npm openssl uv; do
@@ -28,10 +28,10 @@ done
 make backend-install web-install >/dev/null
 
 presenter="$(openssl rand -hex 24)"
+main_session="$(openssl rand -hex 32)"
+main_internal="$(openssl rand -hex 32)"
 staging_session="$(openssl rand -hex 32)"
-production_session="$(openssl rand -hex 32)"
 staging_internal="$(openssl rand -hex 32)"
-production_internal="$(openssl rand -hex 32)"
 
 neon_url() {
   local branch="$1"
@@ -50,19 +50,19 @@ neon_url() {
   neonctl "${args[@]}"
 }
 
+main_db="$(neon_url "$MAIN_BRANCH" true)"
+main_direct="$(neon_url "$MAIN_BRANCH" false)"
 staging_db="$(neon_url "$STAGING_BRANCH" true)"
-production_db="$(neon_url "$PRODUCTION_BRANCH" true)"
 staging_direct="$(neon_url "$STAGING_BRANCH" false)"
-production_direct="$(neon_url "$PRODUCTION_BRANCH" false)"
+[[ "$main_db" == postgresql://* ]]
 [[ "$staging_db" == postgresql://* ]]
-[[ "$production_db" == postgresql://* ]]
 
-for database_url in "$staging_direct" "$production_direct"; do
+for database_url in "$main_direct" "$staging_direct"; do
   DATABASE_URL="$database_url" .venv/bin/ambrosia-db migrate >/dev/null
   DATABASE_URL="$database_url" .venv/bin/ambrosia-db seed >/dev/null
   DATABASE_URL="$database_url" .venv/bin/ambrosia-db verify >/dev/null
 done
-echo "Neon staging and production are migrated, seeded, and verified."
+echo "Neon main and staging are migrated, seeded, and verified."
 
 common_runtime=(
   "DEMO_PRESENTER_SECRET=$presenter"
@@ -84,6 +84,15 @@ common_runtime=(
   "PAYMENT_PROVIDER=simulated"
 )
 
+.venv/bin/modal secret create ambrosia-runtime --env main --force \
+  "APP_ENV=production" \
+  "DATABASE_URL=$main_db" \
+  "AUTH_SESSION_SECRET=$main_session" \
+  "MODAL_INTERNAL_AUTH_SECRET=$main_internal" \
+  "MODAL_AI_URL=$MAIN_AI" \
+  "${common_runtime[@]}" >/dev/null
+.venv/bin/modal secret create ambrosia-ai-internal --env main --force \
+  "MODAL_INTERNAL_AUTH_SECRET=$main_internal" >/dev/null
 .venv/bin/modal secret create ambrosia-runtime --env staging --force \
   "APP_ENV=staging" \
   "DATABASE_URL=$staging_db" \
@@ -93,44 +102,29 @@ common_runtime=(
   "${common_runtime[@]}" >/dev/null
 .venv/bin/modal secret create ambrosia-ai-internal --env staging --force \
   "MODAL_INTERNAL_AUTH_SECRET=$staging_internal" >/dev/null
-.venv/bin/modal secret create ambrosia-runtime --env production --force \
-  "APP_ENV=production" \
-  "DATABASE_URL=$production_db" \
-  "AUTH_SESSION_SECRET=$production_session" \
-  "MODAL_INTERNAL_AUTH_SECRET=$production_internal" \
-  "MODAL_AI_URL=$PRODUCTION_AI" \
-  "${common_runtime[@]}" >/dev/null
-.venv/bin/modal secret create ambrosia-ai-internal --env production --force \
-  "MODAL_INTERNAL_AUTH_SECRET=$production_internal" >/dev/null
 
+printf '%s' "$main_internal" | gh secret set MODAL_INTERNAL_AUTH_SECRET --env production -R "$GITHUB_REPOSITORY"
+printf '%s' "$MAIN_AI" | gh secret set MODAL_AI_URL --env production -R "$GITHUB_REPOSITORY"
+printf '%s' "$MAIN_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env production -R "$GITHUB_REPOSITORY"
+printf '%s' "$main_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env production -R "$GITHUB_REPOSITORY"
+printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$staging_internal" | gh secret set MODAL_INTERNAL_AUTH_SECRET --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$STAGING_AI" | gh secret set MODAL_AI_URL --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$STAGING_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$staging_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env staging -R "$GITHUB_REPOSITORY"
-printf '%s' "$production_internal" | gh secret set MODAL_INTERNAL_AUTH_SECRET --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$PRODUCTION_AI" | gh secret set MODAL_AI_URL --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$PRODUCTION_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$production_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env production -R "$GITHUB_REPOSITORY"
-echo "Modal and GitHub environment secrets are synchronized."
+echo "Modal main/staging and GitHub production/staging secrets are synchronized."
 
 export VERCEL_ORG_ID VERCEL_PROJECT_ID
-for target in production preview; do
-  printf '%s' "$presenter" | npx --yes vercel@56.3.0 --cwd apps/web env add \
-    PRESENTER_ACCESS_CODE "$target" --force --sensitive --yes >/dev/null
-done
-printf '%s' "$presenter" | npx --yes vercel@56.3.0 --cwd apps/web env add \
-  PRESENTER_ACCESS_CODE development --force --no-sensitive --yes >/dev/null
-npx --yes vercel@56.3.0 --cwd apps/web env add AMBROSIA_API_ORIGIN preview \
-  --force --no-sensitive --value "$STAGING_API" --yes >/dev/null
-npx --yes vercel@56.3.0 --cwd apps/web env add AMBROSIA_API_ORIGIN production \
-  --force --no-sensitive --value "$PRODUCTION_API" --yes >/dev/null
+npx --yes vercel@50.28.0 --cwd apps/web env add AMBROSIA_API_ORIGIN production \
+  --force --value "$MAIN_API" --yes >/dev/null
+npx --yes vercel@50.28.0 --cwd apps/web env add AMBROSIA_API_ORIGIN preview \
+  --force --value "$STAGING_API" --yes >/dev/null
 for target in production preview development; do
-  npx --yes vercel@56.3.0 --cwd apps/web env add NEXT_PUBLIC_APP_URL "$target" \
-    --force --no-sensitive --value "$WEB_ORIGIN" --yes >/dev/null
-  npx --yes vercel@56.3.0 --cwd apps/web env add NEXT_PUBLIC_DEMO_TEST_MODE "$target" \
-    --force --no-sensitive --value false --yes >/dev/null
+  npx --yes vercel@50.28.0 --cwd apps/web env add NEXT_PUBLIC_APP_URL "$target" \
+    --force --value "$WEB_ORIGIN" --yes >/dev/null
+  npx --yes vercel@50.28.0 --cwd apps/web env add NEXT_PUBLIC_DEMO_TEST_MODE "$target" \
+    --force --value false --yes >/dev/null
 done
 echo "Vercel environment bindings are synchronized."
 
@@ -182,8 +176,8 @@ deploy_and_attest() {
   return 1
 }
 
+deploy_and_attest main "$MAIN_API" "$MAIN_AI" "$main_internal"
 deploy_and_attest staging "$STAGING_API" "$STAGING_AI" "$staging_internal"
-deploy_and_attest production "$PRODUCTION_API" "$PRODUCTION_AI" "$production_internal"
 
 if [[ "${RUN_HOSTED_E2E:-1}" == "1" ]]; then
   (
