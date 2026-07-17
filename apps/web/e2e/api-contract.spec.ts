@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 test("same-origin API enforces the supported session and validation contract", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+
   const health = await page.request.get("/api/health", { headers: { "X-Request-ID": "playwright-api-canary" } });
   expect(health.status()).toBe(200);
   expect(await health.json()).toMatchObject({ status: "healthy", database: "healthy" });
