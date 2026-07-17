@@ -474,6 +474,8 @@ async def test_health_returns_503_when_the_database_is_unavailable(client) -> No
     assert response.status_code == 503
     assert response.json()["status"] == "degraded"
     assert response.json()["database"] == "unavailable"
+    assert response.json()["aiModel"] == "gpt-5.6-luna"
+    assert response.json()["aiReasoningEffort"] == "low"
 
 
 PERSONAS = {"patient", "provider", "clinical", "biller", "owner"}

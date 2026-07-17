@@ -112,7 +112,7 @@ deploy_and_attest() {
   .venv/bin/modal deploy -m backend.modal_app --env "$environment"
   curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 3 \
     --max-time 30 "$api_url/api/health" |
-    python3 -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy" and data.get("ai")=="openai_configured", data'
+    python3 -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy" and data.get("ai")=="openai_configured" and data.get("aiModel")=="gpt-5.6-luna" and data.get("aiReasoningEffort")=="low", data'
   .venv/bin/ambrosia-ai-attest
   echo "$environment API, Neon connection, and OpenAI model contract are attested."
 }

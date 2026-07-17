@@ -85,4 +85,4 @@ jobs:
           test -n "$MODAL_API_HEALTH_URL"
           curl --fail --silent --show-error --retry 10 --retry-all-errors --max-time 20 \
             "$MODAL_API_HEALTH_URL" | \
-            python -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy" and data.get("ai")=="openai_configured", data'
+            python -c 'import json, sys; data=json.load(sys.stdin); assert data.get("status")=="healthy" and data.get("database")=="healthy" and data.get("ai")=="openai_configured" and data.get("aiModel")=="gpt-5.6-luna" and data.get("aiReasoningEffort")=="low", data'

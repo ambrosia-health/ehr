@@ -17,7 +17,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .ai import CAPABILITIES, run_ai
+from .ai import (
+    ATTESTED_AI_MODEL,
+    ATTESTED_AI_REASONING_EFFORT,
+    CAPABILITIES,
+    run_ai,
+)
 from .clock import domain_now
 from .config import Settings, get_settings
 from .database import SessionLocal, create_schema, get_session
@@ -298,6 +303,7 @@ def clear_session_cookie(response: Response, runtime: Settings) -> None:
 
 @app.get("/api/health")
 async def health(session: Session) -> Any:
+    settings = get_settings()
     try:
         await session.execute(text("SELECT 1"))
         database = "healthy"
@@ -307,9 +313,11 @@ async def health(session: Session) -> Any:
         "status": "healthy" if database == "healthy" else "degraded",
         "service": "ambrosia-domain-api",
         "database": database,
-        "ai": "openai_configured" if get_settings().openai_api_key else "fallback_only",
-        "environment": get_settings().environment,
-        "demo_mode": get_settings().demo_mode,
+        "ai": "openai_configured" if settings.openai_api_key else "fallback_only",
+        "ai_model": ATTESTED_AI_MODEL,
+        "ai_reasoning_effort": ATTESTED_AI_REASONING_EFFORT,
+        "environment": settings.environment,
+        "demo_mode": settings.demo_mode,
         "time": utcnow(),
     }
     if database != "healthy":
