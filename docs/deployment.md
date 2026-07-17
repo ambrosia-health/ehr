@@ -62,14 +62,9 @@ make reset
 
 ## Configuration contract
 
-### Vercel server environment
+### Vercel runtime configuration
 
-| Variable | Scope | Purpose |
-|---|---|---|
-| `AMBROSIA_API_ORIGIN` | Preview/Production server only | Optional override for the corresponding Modal ASGI origin used by the same-origin `/api` rewrite. Without it, canonical/main hosts route to Modal main and preview/unknown hosts route to Modal staging, so builds and safe environment separation do not depend on Vercel env injection. |
-| `NEXT_PUBLIC_APP_URL` | public | Canonical web origin for links; contains no secret. |
-| `NEXT_PUBLIC_DEMO_TEST_MODE` | public | Keep `false` for local, preview, production and integrated E2E. It may be `true` only in an isolated frontend/API harness whose backend is explicitly `APP_ENV=test`; that harness alone may send `X-Demo-Persona`. |
-| `PRESENTER_ACCESS_CODE` | protected server-only | Synthetic hosted-E2E credential synchronized with Modal and GitHub; never exposed through `NEXT_PUBLIC_*` or application responses. |
+The managed Vercel project intentionally has no application environment variables and disables automatic system-variable exposure. Canonical and main-branch hosts route to Modal main; preview and unknown hosts route to Modal staging through versioned `next.config.ts` rules. This removes encrypted runtime-env loading from middleware and keeps preview separation functional even when platform env injection is unavailable. Local builds may still use the server-only `AMBROSIA_API_ORIGIN` override.
 | `BLOB_READ_WRITE_TOKEN` | server only, if uploads enabled | Private synthetic upload adapter. Do not expose to the browser. |
 
 Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to Modal, preserving the browser's session request. Modal authenticates and authorizes it, assigns or returns `X-Request-ID`, and emits private/no-store headers; Next adds matching no-store and `Vary: Cookie` headers. A lightweight Next.js request Proxy performs only an optimistic product-route cookie check, keeping presentation routes static and prefetchable; Modal remains the authorization boundary for every read and mutation. This demo does not implement a custom route-handler proxy or a header/body allowlist. Explicit forwarding rules and body/time limits are production gates if the API rewrite is replaced by an application proxy.
@@ -99,7 +94,7 @@ The current `backend.modal_app` contract is deliberately small:
 | `NEON_DATABASE_URL_DIRECT` | protected migration job; environment-specific |
 | `MODAL_API_HEALTH_URL` | post-deploy authenticated/non-sensitive health endpoint URL |
 | `OPENAI_API_KEY` | synchronized into `ambrosia-openai`; exact provider/model/reasoning contract attestation |
-| `PRESENTER_ACCESS_CODE` | protected hosted demo/E2E access retained only in platform secret stores and provisioner process memory |
+| `PRESENTER_ACCESS_CODE` | protected hosted demo/E2E access retained only in Modal/GitHub secret stores and provisioner process memory |
 
 GitHub `staging` and `production` environments are provisioned and environment-specific; the latter carries the secrets for Modal `main` and the hosted Vercel production alias. Enforce required reviewers before treating it as a controlled release boundary. Restrict deployment credentials to service identities, rotate them, and never echo credential-bearing URLs or environment files. Native Vercel Git deployment does **not** require `VERCEL_TOKEN` in GitHub.
 
@@ -111,19 +106,19 @@ Authorized platform operators use one desired-state reconciliation entrypoint:
 ./scripts/provision-managed-infra.sh
 ```
 
-The script requires already authenticated `gh`, `neonctl`, Modal, and Vercel CLIs plus `OPENAI_API_KEY` from an authorized operator. It is safe to rerun against the registered resources: migrations, canonical seed loading, environment-variable replacement, secret creation, and deployments converge instead of accumulating resources. Each run intentionally generates new high-entropy presenter and session secrets, so it is also a coordinated credential rotation. Normal pushes need no operator input because GitHub synchronizes the stored OpenAI key into Modal before deployment.
+The script requires already authenticated `gh`, `neonctl`, and Modal CLIs plus `OPENAI_API_KEY` from an authorized operator. It is safe to rerun against the registered resources: migrations, canonical seed loading, secret replacement, and deployments converge instead of accumulating resources. Each run intentionally generates new high-entropy presenter and session secrets, so it is also a coordinated credential rotation. Normal pushes need no operator input because GitHub synchronizes the stored OpenAI key into Modal before deployment.
 
 The script:
 
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
 3. replaces Modal runtime/OpenAI secrets and matching GitHub environment secrets;
-4. replaces Vercel Preview/Production API origins, public origin, demo-test flag, and protected presenter credential;
+4. relies on versioned Vercel host routing with no runtime variables or duplicated presenter credential;
 5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
 6. invokes the repository AI attestation through the Responses API and fails closed unless OpenAI returns `gpt-5.6-luna` with low reasoning and a schema- plus semantic-valid body;
 7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.
 
-`RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. Vercel masks sensitive values on environment pull, so the provisioner runs hosted E2E before discarding the generated presenter credential instead of copying that credential to disk. A passing hosted run leaves the canonical scenario at chapter one rather than leaving production in the completed test state.
+`RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. The provisioner passes the freshly generated presenter credential directly to Playwright and discards it after the run instead of copying it to disk or Vercel. A passing hosted run leaves the canonical scenario at chapter one rather than leaving production in the completed test state.
 
 This script is an infrastructure-maintainer operation, not contributor bootstrap. Product developers and new agents use `make dev` locally and Git for hosted previews; they do not handle connection strings or platform secrets.
 
@@ -154,7 +149,7 @@ MODAL_ENVIRONMENT=main make modal-deploy
 MODAL_ENVIRONMENT=staging make modal-deploy
 ```
 
-Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets, update Vercel bindings, and attest both managed environments. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
+Direct one-off deployment is useful during development, but the reconciliation script is the authoritative way to rotate secrets and attest both managed environments. Vercel bindings change through reviewed `next.config.ts` updates. Verify direct unauthenticated domain requests fail even though the health endpoint intentionally exposes only bounded readiness state.
 
 The CPU-only domain API uses Modal's scale-to-zero defaults. OpenAI timeout or provider failure selects the visible deterministic inference fallback; live and fallback proposals retain the same schema validation and clinician approval gate.
 

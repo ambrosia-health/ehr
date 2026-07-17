@@ -105,10 +105,10 @@ Audit answers: who, in which tenant/role, did what, to which resource, when, fro
 
 ## Secrets and environment separation
 
-- `.env` is local only. GitHub Actions environment secrets authenticate Modal deployment/migration; Vercel environment variables configure the server-side rewrite; Modal Secrets hold runtime database/model/provider credentials. Native Vercel Git previews do not require `VERCEL_TOKEN` in GitHub.
+- `.env` is local only. GitHub Actions environment secrets authenticate Modal deployment/migration; versioned host rules configure the Vercel server-side rewrite without runtime variables; Modal Secrets hold runtime database/model/provider credentials. Native Vercel Git previews do not require `VERCEL_TOKEN` in GitHub.
 - The current synthetic demo separates Neon branches, Modal environments, Vercel environments, session keys, and model-provider credentials. A real-data deployment must establish the stronger account/project/database/role isolation selected by the approved threat model and vendor agreements.
 - Keep `AUTH_SESSION_SECRET` (user-session signatures), `DEMO_PRESENTER_SECRET` (demo delegation), and `OPENAI_API_KEY` (model-provider access) distinct; compromise or rotation of one must not silently grant the others.
-- Do not expose server secrets under `NEXT_PUBLIC_*`. `AMBROSIA_API_ORIGIN` is server-only.
+- Do not expose server secrets under `NEXT_PUBLIC_*`. `AMBROSIA_API_ORIGIN` is a server-only local/operator override, not a managed Vercel variable.
 - Rotate any credential printed to a terminal, pasted into chat/issues, committed, embedded in an artifact, or exposed to an untrusted preview. Purge history/artifacts after rotation as applicable.
 - Preview environments are synthetic-only, expire when practical, and cannot reach production providers.
 

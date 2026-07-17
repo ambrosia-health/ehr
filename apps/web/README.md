@@ -1,6 +1,6 @@
 # Ambrosia web
 
-Next.js 16 frontend for the Ambrosia dermatology operating-system demo. The browser talks only to same-origin `/api/*`; Next.js rewrites those requests to the FastAPI domain service using the server-only `AMBROSIA_API_ORIGIN`.
+Next.js 16 frontend for the Ambrosia dermatology operating-system demo. The browser talks only to same-origin `/api/*`; versioned host rules send canonical/main traffic to Modal main and every preview/unknown host to Modal staging. `AMBROSIA_API_ORIGIN` is only an explicit local or operator override.
 
 ## Local development
 
@@ -40,7 +40,7 @@ Local E2E skips when those credentials are absent; CI fails explicitly so the cr
 
 The managed Vercel project is `ambrosia-ehr` (`prj_ad1AsXV5muySOAyBsxMgcKAj1SVa`), its Root Directory is `apps/web`, and its canonical synthetic-demo site is [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Native Git integration with `ambrosia-health/ehr` creates branch/PR previews and deploys `main`; no `VERCEL_TOKEN` or manual per-contributor environment setup is required. `.github/workflows/vercel-preview.yml` verifies pull requests and smoke-tests successful non-production deployment events rather than creating a second CLI deployment.
 
-Managed Preview `AMBROSIA_API_ORIGIN` targets the synthetic Modal staging API; Production targets the synthetic Modal main API. These optional overrides match the host-based defaults in `next.config.ts`. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) is the authorized reconciliation path for these bindings and the corresponding platform secrets. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
+Vercel carries no application runtime variables or secrets. The environment-safe Modal bindings live in `next.config.ts`, so Git builds and middleware do not depend on an encrypted runtime environment file. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) reconciles Neon, Modal, GitHub secrets, and hosted verification. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
 
 Never set `NEXT_PUBLIC_DEMO_TEST_MODE=true` in production. Presenter capability comes only from the signed HTTP-only session returned by the domain API.
 

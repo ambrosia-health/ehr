@@ -10,8 +10,6 @@ NEON_ROLE="ambrosia_owner"
 MAIN_BRANCH="br-still-wildflower-aunolqvx"
 STAGING_BRANCH="br-rough-feather-auv415ro"
 GITHUB_REPOSITORY="ambrosia-health/ehr"
-VERCEL_ORG_ID="team_NWSCGbaTw7YBdtMacOBB2f2D"
-VERCEL_PROJECT_ID="prj_ad1AsXV5muySOAyBsxMgcKAj1SVa"
 MAIN_API="https://kshr-ai--ambrosia-health-domain-api-api.modal.run"
 STAGING_API="https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run"
 WEB_ORIGIN="https://ambrosia-ehr.vercel.app"
@@ -106,23 +104,6 @@ printf '%s' "$staging_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env sta
 printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env staging -R "$GITHUB_REPOSITORY"
 echo "Modal main/staging and GitHub production/staging secrets are synchronized."
-
-export VERCEL_ORG_ID VERCEL_PROJECT_ID
-npx --yes vercel@50.28.0 --cwd apps/web env add AMBROSIA_API_ORIGIN production \
-  --force --value "$MAIN_API" --yes >/dev/null
-npx --yes vercel@50.28.0 --cwd apps/web env add AMBROSIA_API_ORIGIN preview \
-  --force --value "$STAGING_API" --yes >/dev/null
-for target in production preview development; do
-  npx --yes vercel@50.28.0 --cwd apps/web env add NEXT_PUBLIC_APP_URL "$target" \
-    --force --value "$WEB_ORIGIN" --yes >/dev/null
-  npx --yes vercel@50.28.0 --cwd apps/web env add NEXT_PUBLIC_DEMO_TEST_MODE "$target" \
-    --force --value false --yes >/dev/null
-done
-npx --yes vercel@50.28.0 --cwd apps/web env add PRESENTER_ACCESS_CODE production \
-  --force --value "$presenter" --yes >/dev/null
-npx --yes vercel@50.28.0 --cwd apps/web env add PRESENTER_ACCESS_CODE preview "" \
-  --force --value "$presenter" --yes >/dev/null
-echo "Vercel environment bindings are synchronized."
 
 deploy_and_attest() {
   local environment="$1"
