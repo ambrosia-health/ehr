@@ -115,7 +115,7 @@ describe("AppShell", () => {
 
     await user.click(await screen.findByLabelText("Open navigation"));
     expect(screen.getByRole("dialog")).toBeVisible();
-    await user.click(screen.getByRole("link", { name: "Messages" }));
+    await user.click(screen.getByRole("link", { name: "Inbox" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });

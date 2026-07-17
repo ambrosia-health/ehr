@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { MsoDashboard } from "@/components/mso/mso-dashboard";
+import { OperationsScreen } from "@/components/platform/operations-screen";
 
-export const metadata: Metadata = { title: "MSO intelligence" };
+export const metadata: Metadata = { title: "Operations" };
 
 export default function MsoPage() {
-  return <MsoDashboard />;
+  return <OperationsScreen />;
 }

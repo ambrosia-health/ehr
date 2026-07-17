@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { PathologyWorkspace } from "@/components/provider/pathology-workspace";
+import { ResultsScreen } from "@/components/platform/results-screen";
 
-export const metadata: Metadata = { title: "Pathology" };
+export const metadata: Metadata = { title: "Results" };
 
 export default function PathologyPage() {
-  return <PathologyWorkspace />;
+  return <ResultsScreen />;
 }

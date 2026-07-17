@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { CommandCenter } from "@/components/provider/command-center";
+import { TodayScreen } from "@/components/platform/today-screen";
 
-export const metadata: Metadata = { title: "Command center" };
+export const metadata: Metadata = { title: "Today" };
 
 export default function CommandCenterPage() {
-  return <CommandCenter />;
+  return <TodayScreen />;
 }

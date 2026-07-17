@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { PatientChart } from "@/components/provider/patient-chart";
+import { PatientAgentScreen } from "@/components/platform/patient-agent-screen";
 
 export const metadata: Metadata = { title: "Sarah Mitchell" };
 
 export default function SarahChartPage() {
-  return <PatientChart />;
+  return <PatientAgentScreen />;
 }

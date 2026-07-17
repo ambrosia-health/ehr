@@ -1,52 +1,78 @@
-# Design QA — Provider command center
+# Design QA — Ambrosia AI-native clinic platform
 
-## Visual truth and test state
+## Visual truth and implementation evidence
 
-- Selected source: `.product-design/reference/option-2-care-flow-board.png`
-- Final implementation: `.product-design/implementation/final-1440x1024.png`
-- Full comparison: `.product-design/implementation/comparison-final.png` (source left, implementation right)
-- Focused comparison: `.product-design/implementation/comparison-focused-active-visit.png` (source left, implementation right)
-- Mobile evidence: `.product-design/implementation/mobile-390x844.png`
-- Desktop viewport: 1440 × 1024
-- Mobile viewport: 390 × 844
-- State: provider command center, Visit overview selected, authenticated synthetic local scenario
+- Selected visual truth:
+  - `.product-design/reference/ai-native-living-dayline.png`
+  - `.product-design/reference/ai-native-suite/care-horizons.png`
+  - `.product-design/reference/ai-native-suite/sarah-care-agent.png`
+  - `.product-design/reference/ai-native-suite/clinic-intelligence.png`
+- Full-view comparisons, with reference and implementation in the same image:
+  - `.product-design/qa/command-center-comparison.png`
+  - `.product-design/qa/care-horizons-comparison.png`
+- Cross-screen evidence: `.product-design/qa/platform-contact-sheet.png`
+- Focused implementation evidence:
+  - `.product-design/qa/today-viewport-final.png`
+  - `.product-design/qa/today-horizons-final.png`
+  - `.product-design/qa/sarah-agent-final.png`
+  - `.product-design/qa/schedule-final.png`
+  - `.product-design/qa/inbox-final.png`
+  - `.product-design/qa/results-final.png`
+  - `.product-design/qa/revenue-final.png`
+  - `.product-design/qa/operations-final.png`
+  - `.product-design/qa/patient-plan-final.png`
+- Responsive evidence:
+  - `.product-design/qa/today-mobile.png`
+  - `.product-design/qa/inbox-mobile.png`
+- Desktop viewport/state: 1339 × 865, authenticated as Dr. Maya Chen, July 17 synthetic clinic state, `Now` horizon selected.
+- Mobile viewport/state: 390 × 844, same authenticated clinic state.
 
 ## Comparison history
 
 ### Iteration 1
 
-Evidence: `.product-design/implementation/iteration-1-1440x1024.png`
-
 - P0: none.
 - P1: none.
-- P2: the sidebar exposed a direct Sarah Mitchell navigation item that was absent from the selected concept.
-- P2: a 2:30 appointment was followed by open slots beginning at 11:00 and repeated 2:30, breaking schedule chronology.
+- P2, layout: long care rails exceeded their available panel width, obscuring downstream communication, revenue, and closure stages on Today and Sarah's agent.
+- P2, evidence quality: `fullPage` capture was unreliable around fixed navigation and AgentDock surfaces, producing DPR-scaled crops for some screens.
 
-Fixes: removed the direct patient sidebar item; retained chart access in the active-visit workspace; derived open schedule slots from the latest scheduled appointment.
+Fixes:
+
+- Added a responsive compact care-rail mode, narrowed Today's patient identity column, and used the compact rail in Today, Sarah's agent, and Schedule. Final DOM measurements show no rail overflow: Today `479 px` viewport/`479 px` scroll width; Sarah `688 px` viewport/`688 px` scroll width.
+- Re-captured canonical viewport states and used a two-state Today story for the cross-screen board. Full-view reference comparisons use normalized, same-state viewport captures.
 
 ### Iteration 2 and final
-
-Evidence: `.product-design/implementation/iteration-2-1440x1024.png`, `.product-design/implementation/comparison-iteration-2.png`, and the final evidence listed above.
 
 - P0: none.
 - P1: none.
 - P2: none remaining.
-- P3: synthetic scenario timestamps, message senders, and pathology status differ from the concept because the implementation renders the repository's live scenario data. This is intentional data fidelity, not visual drift.
+- P3: dense compact horizons intentionally truncate long step labels while preserving every stage marker, status, sequence, and outcome. Full text is present in the patient agent and associated details.
+- P3: forced local backend restarts generated historical bootstrap-timeout and LCP telemetry warnings. The stable stack completed every tested route and interaction without application exceptions; subsequent client-side navigation remained responsive.
 
 ## Required surface checks
 
-- Typography: restrained scale, clinical information hierarchy, compact labels, tabular time treatment, and readable body copy match the selected direction.
-- Spacing and layout rhythm: 72 px shell header; fixed schedule and priority rails; flexible active-visit center; consistent border, inset, and section spacing. The focused comparison confirms the center-column proportions.
-- Colors and tokens: existing background, border, foreground, primary green, semantic success, warning, and message-accent tokens are reused; no conflicting palette was introduced.
-- Image quality: the real synthetic lesion image is rendered through Next Image with preserved crop quality and useful alt text.
-- Copy and content: labels are concise and clinically meaningful. Patient, coverage, pharmacy, pathology, message, encounter, and risk-context values come from the API.
-- Icons: Lucide icons are used consistently at compact sizes; no decorative or mismatched icon set was added.
-- Responsiveness: desktop preserves the three-column care-flow board. Mobile stacks active visit, schedule, and priority actions, retains horizontal tab access, and has no horizontal document overflow (`390 px` document width at a `390 px` viewport).
-- Accessibility and interactions: semantic landmarks, headings, tabs, menu items, links, labels, alt text, focusable controls, and mobile dialog navigation are present. Search filtering, search reset, History, Notes & results, Visit overview, patient-actions menu, mobile navigation, and the Start visit destination were verified in-browser.
-- Runtime: browser console has no warnings or errors in the final state. Typecheck, lint, the complete component test suite, and the Next.js production build pass.
+- Typography: restrained clinical hierarchy, compact operational labels, tabular metrics, and readable patient copy preserve the selected reference's professional density.
+- Spacing and layout: the forest sidebar, cream canvas, fixed operating header, exception-first decisions, longitudinal care rails, and contextual right panels remain aligned across all nine screens.
+- Colors and tokens: forest, warm cream, amber human-stop, muted waiting, red risk, and green completion states map consistently across clinical, communication, and financial work.
+- Imagery: Sarah's generated fictional portrait is sharp, naturally cropped, and integrated as a real Next Image asset. Existing synthetic lesion imagery remains source-backed and includes useful alt text.
+- Icons: Lucide icons are used consistently with matched stroke weight, sizing, and semantic meaning. No fake SVG or CSS-art assets are present.
+- Copy and content: every screen names the work, reason for stopping, accountable owner, permission boundary, next action, and downstream release in plain clinical language.
+- Viewport resilience: desktop and mobile have no document-level horizontal overflow. Mobile collapses to a menu, stacks stats and content, preserves primary actions, and keeps AgentDock available.
+- Accessibility: semantic headings, landmarks, buttons, links, dialogs, tab states, search labels, image alt text, keyboard focusability, and practical mobile targets are present.
+- States and interactions verified in-browser:
+  - Today decision review and six-action release
+  - patient portfolio search and Sarah navigation
+  - Sarah biopsy-plan approval
+  - schedule visit selection
+  - grounded patient-response approval and delivery
+  - pathology disposition and closure receipt
+  - revenue exception approval and release
+  - Operations intelligence switching
+  - patient visit confirmation
+- Runtime checks: TypeScript, ESLint, all 56 component tests across 19 files, and the Next.js production build pass. Twenty routes were generated.
 
 ## Final assessment
 
-The implementation preserves the selected concept's defining shell, schedule-to-visit-to-priority flow, information density, image treatment, hierarchy, and actions while using real application data and existing design primitives. All P0, P1, and P2 findings are resolved.
+The platform now reads as one AI operating layer rather than separate EHR modules: clinicians manage only consequential stops, every patient retains a visible long-horizon agent, communication and revenue remain linked to the same care goal, and the patient sees a simpler version of the identical plan. The selected reference's hierarchy, palette, density, and human-boundary model are preserved across the complete clinic workflow.
 
 final result: passed

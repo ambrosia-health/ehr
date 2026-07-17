@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { MessagingWorkspace } from "@/components/provider/messaging-workspace";
+import { InboxScreen } from "@/components/platform/inbox-screen";
 
-export const metadata: Metadata = { title: "Secure messages" };
+export const metadata: Metadata = { title: "Inbox" };
 
 export default function MessagesPage() {
-  return <MessagingWorkspace />;
+  return <InboxScreen />;
 }
