@@ -1,10 +1,12 @@
 # Ambrosia web
 
-Next.js 16 frontend for the Ambrosia dermatology operating-system demo. The browser talks only to same-origin `/api/*`; versioned host rules send canonical/main traffic to Modal main and every preview/unknown host to Modal staging. `AMBROSIA_API_ORIGIN` is only an explicit local or operator override.
+Next.js 16 frontend for the dermatologist operating workspace. `/` is the canonical Today view; Patients, Schedule, Inbox, Results, Revenue, Operations, and Sarah Mitchell’s care agent share one clinician shell. There is no browser login, persona switcher, patient portal, presenter console, or compatibility route.
+
+The product views currently use explicit synthetic fixtures in `src/components/platform`. Backend domain workflows remain available through the same-origin `/api/*` rewrite. New browser HTTP traffic must use `src/lib/api/client.ts` so request timing, correlation IDs, and `Server-Timing` stay observable.
 
 ## Local development
 
-The repository-root `make dev` command is the preferred zero-credential path and creates all synthetic-safe local configuration automatically. For web-only work against an already running API:
+The repository-root `make dev` command is the preferred zero-credential path. For web-only work against an already running API:
 
 ```bash
 npm install
@@ -12,7 +14,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-`AMBROSIA_API_ORIGIN` defaults to `http://127.0.0.1:8000` in development and remains available as an explicit server-side override. Managed deployments need no routing variable: canonical and main-branch hosts route to Modal main, while preview and unknown hosts route to Modal staging.
+`AMBROSIA_API_ORIGIN` defaults to `http://127.0.0.1:8000` in development. Managed deployments need no routing variable: canonical and main-branch hosts route to Modal main, while previews and unknown hosts route to Modal staging.
 
 ## Quality gates
 
@@ -21,27 +23,17 @@ npm run lint
 npm run typecheck
 npm test
 AMBROSIA_API_ORIGIN=http://127.0.0.1:8000 npm run build
-```
-
-The live browser journey requires the real API and a protected presenter credential:
-
-```bash
-E2E_LIVE_API=1 \
-PRESENTER_ACCESS_CODE=... \
-AMBROSIA_API_ORIGIN=http://127.0.0.1:8000 \
 npm run e2e
 ```
 
-Local E2E skips when those credentials are absent; CI fails explicitly so the critical path cannot disappear silently.
+Playwright verifies direct product entry, every canonical clinician route, removal of legacy routes, and the same-origin API/session/observability contract. Local E2E expects FastAPI at `AMBROSIA_API_ORIGIN`; `make e2e` is the normal integrated path.
 
-`npm run e2e:hosted` uses `playwright.hosted.config.ts`, requires an HTTPS `NEXT_PUBLIC_APP_URL`, and never starts a local substitute server. Infrastructure maintainers normally invoke it through [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh), which keeps the rotated presenter credential in memory and fails the reconciliation if the deployed journey fails.
+`npm run e2e:hosted` requires an HTTPS `NEXT_PUBLIC_APP_URL` and never starts a local substitute server. Infrastructure maintainers normally invoke it through [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh).
 
 ## Deployment
 
-The managed Vercel project is `ambrosia-ehr` (`prj_ad1AsXV5muySOAyBsxMgcKAj1SVa`), its Root Directory is `apps/web`, and its canonical synthetic-demo site is [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Native Git integration with `ambrosia-health/ehr` creates branch/PR previews and deploys `main`; no `VERCEL_TOKEN` or manual per-contributor environment setup is required. `.github/workflows/vercel-preview.yml` verifies pull requests and smoke-tests successful non-production deployment events rather than creating a second CLI deployment.
+The managed Vercel project is `ambrosia-ehr` (`prj_ad1AsXV5muySOAyBsxMgcKAj1SVa`), its Root Directory is `apps/web`, and its canonical synthetic-demo site is [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel.app). Native Git integration creates branch/PR previews and deploys `main`; no `VERCEL_TOKEN` or per-contributor environment setup is required.
 
-Vercel carries no application runtime variables or secrets. The environment-safe Modal bindings live in `next.config.ts`, so Git builds and middleware do not depend on an encrypted runtime environment file. [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) reconciles Neon, Modal, GitHub secrets, and hosted verification. `vercel.json` intentionally contains only schema and framework selection; build and output behavior remain Next.js defaults.
+Vercel carries no application secrets. Environment-safe Modal bindings live in `next.config.ts`; [`../../scripts/provision-managed-infra.sh`](../../scripts/provision-managed-infra.sh) reconciles Neon, Modal, GitHub secrets, and hosted verification.
 
-Never set `NEXT_PUBLIC_DEMO_TEST_MODE=true` in production. Presenter capability comes only from the signed HTTP-only session returned by the domain API.
-
-Vercel's `Production` environment name does not make this application suitable for clinical production. The site contains synthetic people and simulated networks only; real PHI remains prohibited until every documented production gate is closed.
+Vercel’s `Production` environment name does not make this application suitable for clinical production. The site contains synthetic people and simulated networks only; real PHI remains prohibited until every documented production gate is closed.

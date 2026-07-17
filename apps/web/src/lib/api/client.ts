@@ -1,8 +1,3 @@
-import type { DemoActionResult } from "@/lib/api/types";
-import {
-  demoSessionExpiredEventName,
-  markDemoSessionEnded,
-} from "@/lib/auth/session-lifecycle";
 import {
   performanceNow,
   reportApiPerformance,
@@ -10,25 +5,6 @@ import {
 } from "@/lib/performance";
 
 const DEFAULT_API_TIMEOUT_MS = 30_000;
-
-export const endpoints = {
-  bootstrap: "/api/demo/bootstrap",
-  demoSession: "/api/auth/demo/session",
-  logout: "/api/auth/logout",
-  switchPersona: "/api/auth/switch",
-  intake: "/api/intake/submissions",
-  resetDemo: "/api/demo/reset",
-  advanceTime: "/api/demo/advance-time",
-  triggerPathology: "/api/demo/triggers/pathology",
-  triggerClaimResponse: "/api/demo/triggers/claim-response",
-  encounterComplete: (encounterId: string) => `/api/encounters/${encounterId}/complete`,
-  noteDraft: (noteId: string) => `/api/notes/${noteId}`,
-  lesionObservation: "/api/lesions/observations",
-  pathologyReview: (resultId: string) => `/api/pathology/results/${resultId}/review`,
-  conversationRead: (conversationId: string) => `/api/conversations/${conversationId}/read`,
-  conversationMessages: (conversationId: string) => `/api/conversations/${conversationId}/messages`,
-  denialResubmit: (claimId: string) => `/api/claims/${claimId}/correct-and-resubmit`,
-} as const;
 
 export class ApiError extends Error {
   constructor(
@@ -108,11 +84,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       throw new ApiError("The API returned malformed JSON.", 502);
     }
 
-    if (response.status === 401 && typeof window !== "undefined") {
-      markDemoSessionEnded();
-      window.dispatchEvent(new Event(demoSessionExpiredEventName));
-    }
-
     if (!response.ok) {
       outcome = "http_error";
       const detail = typeof responseBody === "object" && responseBody && "detail" in responseBody
@@ -122,7 +93,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         ? detail
         : Array.isArray(detail)
           ? detail.map((item) => typeof item === "object" && item && "msg" in item ? String(item.msg) : String(item)).join("; ")
-          : `Request failed with status ${response.status}.`;
+          : "Request failed with status " + response.status + ".";
       throw new ApiError(message, response.status, responseBody);
     }
 
@@ -145,19 +116,4 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       serverTiming,
     });
   }
-}
-
-export async function apiAction(
-  path: string,
-  body: unknown,
-): Promise<DemoActionResult> {
-  const response = await apiRequest<{ message?: string; at?: string }>(path, {
-    method: "POST",
-    body,
-  });
-  return {
-    mode: "live",
-    message: response.message ?? "Saved to the Ambrosia domain API.",
-    at: response.at ?? new Date().toISOString(),
-  };
 }

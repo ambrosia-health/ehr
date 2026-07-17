@@ -48,9 +48,9 @@ make test-postgres
 
 SQLite makes the demo runnable without credentials or hosted dependencies; it is not the hosted architecture. CI also migrates/seeds/tests a localhost Postgres 16 service, and deployed environments use Neon Postgres. Pytest defaults to an isolated temporary SQLite database; it may honor an explicit database URL only for `APP_ENV=test`, `ALLOW_TEST_DATABASE_RESET=true`, and either a local host or an exact `EPHEMERAL_TEST_DATABASE_HOST`. The remote-host option is reserved for an expiring, disposable Neon branch created and deleted by the infrastructure operator; it must never name staging or production.
 
-The CI matrix independently runs backend SQLite tests, a Postgres 16 migration/seed/invariant suite, web lint/type/test/build, and an integrated Playwright journey. The browser journey keeps `NEXT_PUBLIC_DEMO_TEST_MODE=false` and exercises real signed login/persona-switch cookies. `X-Demo-Persona` is reserved for isolated API tests and is accepted only when backend `APP_ENV=test` is explicit; it must never authenticate the integrated browser journey.
+The CI matrix independently runs backend SQLite tests, a Postgres 16 migration/seed/invariant suite, web lint/type/test/build, and Playwright product/API contracts. Browser tests verify direct entry into the dermatologist workspace, every canonical route, removal of compatibility URLs, and real signed-session cookies through the same-origin API rewrite. `X-Demo-Persona` is reserved for isolated backend tests and is accepted only when backend `APP_ENV=test` is explicit.
 
-For a local browser run, start from the canonical state with `make reset`, keep `make dev` running, and invoke `make e2e` in a second terminal. The Make target reads the presenter code from `.env`, opts into the live-stack spec, and leaves the persona header disabled. The CI job additionally parses Playwright's JSON report and fails an all-skipped run.
+For a local browser run, keep `make dev` running and invoke `make e2e` in a second terminal. No browser credential or test-mode flag is required. The CI job additionally parses Playwright's JSON report and fails an empty or skipped contract suite.
 
 Reset only the configured synthetic scenario:
 
@@ -94,7 +94,6 @@ The current `backend.modal_app` contract is deliberately small:
 | `NEON_DATABASE_URL_DIRECT` | protected migration job; environment-specific |
 | `MODAL_API_HEALTH_URL` | post-deploy authenticated/non-sensitive health endpoint URL |
 | `OPENAI_API_KEY` | synchronized into `ambrosia-openai`; exact provider/model/reasoning contract attestation |
-| `PRESENTER_ACCESS_CODE` | protected hosted demo/E2E access retained only in Modal/GitHub secret stores and provisioner process memory |
 
 GitHub `staging` and `production` environments are provisioned and environment-specific; the latter carries the secrets for Modal `main` and the hosted Vercel production alias. Enforce required reviewers before treating it as a controlled release boundary. Restrict deployment credentials to service identities, rotate them, and never echo credential-bearing URLs or environment files. Native Vercel Git deployment does **not** require `VERCEL_TOKEN` in GitHub.
 
@@ -112,13 +111,13 @@ The script:
 
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
-3. replaces Modal runtime/OpenAI secrets and matching GitHub environment secrets;
-4. relies on versioned Vercel host routing with no runtime variables or duplicated presenter credential;
+3. replaces Modal runtime/OpenAI secrets and the GitHub environment secrets used by deployment jobs;
+4. relies on versioned Vercel host routing with no runtime variables or browser credentials;
 5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
 6. invokes the repository AI attestation through the Responses API and fails closed unless OpenAI returns `gpt-5.6-luna` with low reasoning and a schema- plus semantic-valid body;
-7. retains the freshly rotated presenter credential only in process memory while Playwright completes the seven-chapter journey against the Vercel production alias, including reset, persistence, pathology, messaging, denial recovery, MSO metrics, a final canonical reset, and logout.
+7. runs the hosted dermatologist workspace and same-origin API contracts against the Vercel production alias.
 
-`RUN_HOSTED_E2E=0` skips the final browser journey only for a deliberate infrastructure-only recovery operation; it is not a release attestation. The provisioner passes the freshly generated presenter credential directly to Playwright and discards it after the run instead of copying it to disk or Vercel. A passing hosted run leaves the canonical scenario at chapter one rather than leaving production in the completed test state.
+`RUN_HOSTED_E2E=0` skips the final browser contracts only for a deliberate infrastructure-only recovery operation; it is not a release attestation. The workspace contract is read-only apart from in-browser prototype state, while the API contract creates and then ends its own signed synthetic session.
 
 This script is an infrastructure-maintainer operation, not contributor bootstrap. Product developers and new agents use `make dev` locally and Git for hosted previews; they do not handle connection strings or platform secrets.
 

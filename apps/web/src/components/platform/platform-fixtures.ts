@@ -1,5 +1,7 @@
 import type { ComponentType } from "react";
 
+// Synthetic presentation fixtures. These values are not loaded from Modal or persisted to Neon.
+
 export type JourneyStatus = "complete" | "moving" | "waiting" | "human" | "risk";
 
 export interface JourneyStep {
@@ -81,7 +83,7 @@ export const patientJourneys: PatientJourney[] = [
     state: "Advancing",
     next: "Patient photo check · tomorrow",
     lastEvent: "Medication plan released · 9:29 AM",
-    owner: "Ambrosia / care team",
+    owner: "Ambrosia",
     horizon: "48 hours",
     steps: [
       { label: "Visit", detail: "Complete", meta: "9:15 AM", status: "complete" },
@@ -125,7 +127,7 @@ export const patientJourneys: PatientJourney[] = [
     state: "Waiting patient",
     next: "Wound photo · tomorrow",
     lastEvent: "Wound instructions delivered · yesterday",
-    owner: "Clinical pool",
+    owner: "Ambrosia",
     horizon: "48 hours",
     steps: [
       { label: "Mohs", detail: "Complete", meta: "Yesterday", status: "complete" },

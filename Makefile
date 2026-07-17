@@ -16,7 +16,6 @@ API_PORT ?= 8000
 WEB_PORT ?= 3000
 AMBROSIA_API_ORIGIN ?= http://127.0.0.1:8000
 NEXT_PUBLIC_APP_URL ?= http://localhost:3000
-NEXT_PUBLIC_DEMO_TEST_MODE ?= false
 MODAL_ENVIRONMENT ?= dev
 MODAL_APP_MODULE ?= backend.modal_app
 POSTGRES_DATABASE_URL ?= postgresql+asyncpg://ambrosia:ambrosia-local-only@127.0.0.1:5432/ambrosia
@@ -24,7 +23,7 @@ POSTGRES_DATABASE_URL ?= postgresql+asyncpg://ambrosia:ambrosia-local-only@127.0
 # Let an existing local template override command defaults while keeping backend
 # configuration in pydantic-settings. Only browser build variables need export.
 -include .env
-export AMBROSIA_API_ORIGIN NEXT_PUBLIC_APP_URL NEXT_PUBLIC_DEMO_TEST_MODE DEMO_PRESENTER_SECRET
+export AMBROSIA_API_ORIGIN NEXT_PUBLIC_APP_URL DEMO_PRESENTER_SECRET
 
 .PHONY: help env check-tools check-uv check-npm bootstrap bootstrap-ci web-install backend-install db-up db-down db-wait \
 	migrate seed reset verify-data dev dev-postgres dev-services test test-postgres test-backend test-web e2e e2e-run check web-check backend-check \
@@ -95,7 +94,7 @@ dev-postgres: env backend-install web-install db-up db-wait ## Run locally again
 dev-services:
 	@set -euo pipefail; \
 		$(PY) -m uvicorn app.main:app --reload --reload-dir $(BACKEND_DIR)/app --host $(HOST) --port $(API_PORT) & api_pid=$$!; \
-		AMBROSIA_API_ORIGIN="$(AMBROSIA_API_ORIGIN)" NEXT_PUBLIC_APP_URL="$(NEXT_PUBLIC_APP_URL)" NEXT_PUBLIC_DEMO_TEST_MODE="$(NEXT_PUBLIC_DEMO_TEST_MODE)" $(NPM) --prefix $(WEB_DIR) run dev -- --hostname $(HOST) --port $(WEB_PORT) & web_pid=$$!; \
+		AMBROSIA_API_ORIGIN="$(AMBROSIA_API_ORIGIN)" NEXT_PUBLIC_APP_URL="$(NEXT_PUBLIC_APP_URL)" $(NPM) --prefix $(WEB_DIR) run dev -- --hostname $(HOST) --port $(WEB_PORT) & web_pid=$$!; \
 		trap 'kill $$api_pid $$web_pid 2>/dev/null || true' EXIT INT TERM; \
 		while kill -0 $$api_pid 2>/dev/null && kill -0 $$web_pid 2>/dev/null; do sleep 1; done; \
 		wait $$api_pid $$web_pid 2>/dev/null || true; \
@@ -117,10 +116,8 @@ e2e: env check-npm ## Run Playwright against the running local synthetic stack.
 
 e2e-run:
 	@set -euo pipefail; \
-		test -n "$${DEMO_PRESENTER_SECRET:-}" || { echo "DEMO_PRESENTER_SECRET is required in .env" >&2; exit 1; }; \
 		(cd "$(WEB_DIR)" && $(NPX) playwright install chromium >/dev/null); \
-		E2E_LIVE_API=1 PRESENTER_ACCESS_CODE="$$DEMO_PRESENTER_SECRET" NEXT_PUBLIC_DEMO_TEST_MODE=false \
-			$(NPM) --prefix $(WEB_DIR) run e2e
+		$(NPM) --prefix $(WEB_DIR) run e2e
 
 backend-check:
 	$(PY) -m ruff check $(BACKEND_DIR)
@@ -129,7 +126,7 @@ web-check:
 	$(NPM) --prefix $(WEB_DIR) run lint
 	$(NPM) --prefix $(WEB_DIR) run typecheck
 	$(NPM) --prefix $(WEB_DIR) run test
-	AMBROSIA_API_ORIGIN="$(AMBROSIA_API_ORIGIN)" NEXT_PUBLIC_APP_URL="$(NEXT_PUBLIC_APP_URL)" NEXT_PUBLIC_DEMO_TEST_MODE="false" $(NPM) --prefix $(WEB_DIR) run build
+	AMBROSIA_API_ORIGIN="$(AMBROSIA_API_ORIGIN)" NEXT_PUBLIC_APP_URL="$(NEXT_PUBLIC_APP_URL)" $(NPM) --prefix $(WEB_DIR) run build
 
 check: backend-install web-install backend-check web-check test-backend ## Run the static, build, and unit checks used by CI.
 

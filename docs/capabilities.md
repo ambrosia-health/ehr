@@ -6,27 +6,27 @@
 - **External edge**: whether the demo talks to a real healthcare/financial network or an explicit deterministic adapter.
 - **Production equivalence**: whether the component is suitable for live patients. Nothing in this repository is production-approved; see [`production-readiness.md`](./production-readiness.md).
 
-The matrix is the acceptance contract, not proof by itself. A capability is demo-complete only after its evidence test passes in the integrated environment.
+The browser and domain planes are deliberately separate today. The dermatologist workspace is a fixture-backed product prototype: its records, counts, dates, identity, and interactions are local presentation data and do not persist. The FastAPI/Modal/Neon plane implements the durable capabilities below and is evidenced by backend, API-contract, health, and deployment tests. A capability must not be described as connected in the browser until the workspace consumes it through the shared API client and an integration test proves the path.
 
 ## Product and domain capabilities
 
 | Capability | Demo internal behavior | Demo external edge | Required evidence |
 |---|---|---|---|
 | Authentication and role policy | Functional signed demo session; Modal authorization and role-scoped bootstrap/read models | Pre-seeded synthetic personas; no production IdP | role matrix, bootstrap field-scope and cross-tenant API tests; direct Modal rejection |
-| Presenter persona switching | Functional signed delegation, separate from the owner role, protected and demo-mode-only | Synthetic personas | owner-without-code rejection; delegated actor continuity; normal-mode absence |
+| Demo persona switching | Functional API-only signed delegation, separate from the owner role, protected and demo-mode-only | Synthetic personas | owner-without-code rejection; delegated actor continuity; absence from clinician navigation |
 | Patient record and timeline | Durable normalized records | Synthetic seed | create/read/update across restart; tenant isolation |
 | Patient initiation and scheduling | Functional questions, triage flags, slot selection and booking | Local availability rules | Sarah booking persists and appears on staff schedule |
 | Structured intake | Functional normalized allergies, medications, problems, contacts, coverage, consents and images | Synthetic responses/assets | database/API assertions; not one opaque display blob |
 | Eligibility | Functional request/result/benefit records and estimate input | **Deterministic payer simulator** | retry idempotency; request/response provenance |
 | Patient estimate | Functional calculated, versioned estimate | Uses simulated benefits/fee assumptions | line totals and patient amount reconcile |
-| Command center | Functional queries from current records | None | seeded queue counts equal source-record query results |
+| Command center read model | Functional backend queries from current records; current Today UI is a separate fixture-backed projection | None | seeded queue counts equal source-record query results |
 | AI pre-visit summary | Functional run/output/proposal/provenance | Authenticated OpenAI GPT-5.6 Luna with low reasoning when schema/semantics/provenance pass; deterministic fallback otherwise | hosted provider/model/reasoning attestation, timeout/invalid-output fallback test, honest run label and source attribution |
 | Encounter state and ambient transcript | Durable encounter/transcript linkage and state | Transcript may be seeded; live speech engine not required | state transition and restart test |
 | Structured note drafting | Versioned draft and AI proposal | Authenticated OpenAI GPT-5.6 Luna with low reasoning when validated; deterministic local/remote fallback otherwise | schema/semantic validation, fallback labeling, edit trail, approval visibility |
 | Signed notes and amendments | Immutable signed snapshot; append-only amendment | None | mutation fails; original/hash/version chronology preserved |
 | Body map and lesion timeline | Persistent lesion, coded body site, observations and comparisons | Synthetic image assets | same lesion spans encounters; ordered observation history |
 | Biopsy review-and-complete | Atomic approved bundle creates note/procedure/specimen/order/claim/tasks/message/audit/provenance | Pathology transmission simulated | transaction rollback and command idempotency tests |
-| Patient aftercare and messaging | Durable conversation, drafts, sent messages and delivery state | **Deterministic SMS/delivery simulator**; in-app UI functional | approved message grounding and uncertain-question routing |
+| Patient aftercare and messaging | Durable conversation, drafts, sent messages and delivery state; current Inbox interactions are non-persistent prototype state | **Deterministic SMS/delivery simulator** | approved message grounding and uncertain-question routing |
 | Pathology result workflow | Durable result chain, review, task, notification and closure | **Deterministic lab/pathology simulator** | duplicate result idempotency; overdue result remains queued |
 | ePrescribing | Internal proposal/order contract where present | **Deterministic eRx simulator permitted** | must never imply a real prescription was transmitted |
 | Claim construction and validation | Structured claim/lines/events from performed care | None until submission | diagnosis/procedure evidence and balanced totals |
@@ -34,7 +34,7 @@ The matrix is the acceptance contract, not proof by itself. A capability is demo
 | Adjudication/remittance | Durable response, adjustments, payments and balances | **Deterministic remittance simulator** | allocations reconcile to claim/line/balance |
 | Denial and appeal | Durable classification, evidence, recommendation, work task, appeal/resubmission/recovery | **Deterministic payer/clearinghouse simulator** | original denial retained; recovered revenue traceable |
 | Payment settlement | Durable payment/allocation/settlement states | **Deterministic payment simulator** | UI says simulated; ledger remains balanced |
-| MSO analytics | Calculated from committed source records | None | metric formula fixtures and no hard-coded KPI values |
+| MSO analytics | Backend metrics calculated from committed source records; current Operations KPI presentation is hardcoded synthetic data | None | metric formula fixtures and no hard-coded values in the backend read model |
 | Tasks, notifications and workflows | Postgres-backed reminders/tasks/workflow records; current poller delivers due reminders and escalates overdue tasks | Five-minute Modal schedule; deterministic messaging adapter | current poller test; generalized leasing/retry/dead-letter engine remains a pilot gate; no authoritative Modal Queue |
 | Audit and provenance | Append-only actor/action/source/derivation records | None | critical-flow completeness and ordinary-user immutability |
 | Demo reset and time advance | Tenant/scenario-scoped, deterministic, idempotent | Synthetic only | refusal outside synthetic guard; canonical checksum after reset |
@@ -74,7 +74,7 @@ Every simulator implements the same boundary expected of a future live adapter:
 
 Replacing a simulator must not change clinical/RCM tables or let provider callbacks write them directly. Live adapters additionally require credentials, legal/vendor review, sandbox certification, webhook authentication, outage/reconciliation runbooks, monitoring, and end-to-end trading-partner testing.
 
-## Presenter disclosure
+## Demo disclosure
 
 Use this exact framing: “Patient, clinical, operational and financial workflows are functional against Ambrosia’s domain model. External payer, clearinghouse, remittance, messaging, prescribing, pathology transmission and settlement networks are deterministic simulations. AI uses OpenAI GPT-5.6 Luna with low reasoning when its output and provenance validate, with a visibly labeled deterministic fallback. Every person and record shown is synthetic.”
 

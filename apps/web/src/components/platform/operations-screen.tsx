@@ -65,7 +65,7 @@ export function OperationsScreen() {
         ["First-pass acceptance", "97.8%", "+1.9%", "Modifier support is the largest remaining preventable denial source."],
         ["Message resolution", "18 min", "Down 7m", "246 routine conversations advanced under approved policies."],
         ["Visit readiness", "96%", "+8%", "Overnight eligibility and intake reconciliation protected 41 minutes."],
-        ["Staff work avoided", "18.4h", "+4.2h", "Documentation and coordination drove most of the change."],
+        ["Admin work automated", "18.4h", "+4.2h", "Documentation and coordination drove most of the change."],
         ["Patient collection", "88%", "+3%", "EOB-linked explanations reduced balance questions."],
       ].map(([label, value, delta, insight]) => <article key={label} className="rounded-xl border border-[#d9dfd8] bg-white p-5"><div className="flex items-center justify-between"><p className="text-xs font-semibold">{label}</p><StatusPill status="complete">{delta}</StatusPill></div><p className="mt-4 font-mono text-3xl font-semibold tracking-[-0.05em]">{value}</p><p className="mt-3 text-[10px] leading-5 text-[#63736a]">{insight}</p><button type="button" className="mt-4 flex items-center gap-1 text-[10px] font-semibold text-[#245942]">View evidence <ChevronRight className="size-3" /></button></article>)}</div></div> : null}
 

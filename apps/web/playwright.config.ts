@@ -16,7 +16,7 @@ export default defineConfig({
   },
   webServer: {
     command: `npm run dev -- --port ${devPort}`,
-    url: `${baseURL}/login`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: { AMBROSIA_API_ORIGIN: process.env.AMBROSIA_API_ORIGIN ?? "http://127.0.0.1:8000" },

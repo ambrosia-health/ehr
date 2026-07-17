@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { patientJourneys, stateTone } from "./platform-data";
+import { patientJourneys, stateTone } from "./platform-fixtures";
 import { AgentDock, CareRail, PatientMark, ScreenFrame, ScreenHeader, SearchField, SectionTitle, StatusPill } from "./platform-ui";
 
 const savedViews = ["Active goals", "Unresolved pathology", "Interval change", "Biologic monitoring", "Patient overdue", "Surveillance due", "Recently closed"];

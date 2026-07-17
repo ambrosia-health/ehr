@@ -25,7 +25,6 @@ jobs:
     env:
       AMBROSIA_API_ORIGIN: https://api.invalid
       NEXT_PUBLIC_APP_URL: https://preview.invalid
-      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
     steps:
       - uses: actions/checkout@v4
 

@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { patientJourneys } from "./platform-data";
+import { patientJourneys } from "./platform-fixtures";
 import { AgentDock, CareRail, PatientMark, ScreenFrame, ScreenHeader, SectionTitle, StatusPill } from "./platform-ui";
 
 const appointments = [
@@ -46,7 +46,7 @@ export function ScheduleScreen() {
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-[#d9dfd8] bg-white p-5"><div className="flex items-center gap-2"><Sparkles className="size-4 text-[#2b654b]" /><h3 className="text-sm font-semibold">Ambrosia recommends</h3></div><p className="mt-3 text-xs leading-5 text-[#5f7067]">Move the 2:40 PM low-complexity follow-up into the open 1:50 PM slot. This protects 22 minutes for a same-day lesion evaluation and stays within approved templates.</p><div className="mt-4 flex gap-2"><Button size="sm" className="bg-[#1d563e] text-white hover:bg-[#164630]">Approve change</Button><Button variant="outline" size="sm">See impact</Button></div></div>
-            <div className="rounded-xl border border-[#d9dfd8] bg-white p-5"><div className="flex items-center gap-2"><MapPin className="size-4 text-[#2b654b]" /><h3 className="text-sm font-semibold">Capacity monitor</h3></div><div className="mt-4 space-y-3 text-xs">{[["Rooms", "4 of 5 active"], ["Clinical staff", "Fully covered"], ["Procedure capacity", "1 same-day opening"], ["Waitlist", "3 policy matches"]].map(([label, value]) => <div key={label} className="flex justify-between border-b border-[#e5e8e3] pb-3 last:border-b-0"><span className="text-[#6a7971]">{label}</span><span className="font-semibold">{value}</span></div>)}</div></div>
+            <div className="rounded-xl border border-[#d9dfd8] bg-white p-5"><div className="flex items-center gap-2"><MapPin className="size-4 text-[#2b654b]" /><h3 className="text-sm font-semibold">Capacity monitor</h3></div><div className="mt-4 space-y-3 text-xs">{[["Rooms", "4 of 5 active"], ["Admin operations", "Automated"], ["Procedure capacity", "1 same-day opening"], ["Waitlist", "3 policy matches"]].map(([label, value]) => <div key={label} className="flex justify-between border-b border-[#e5e8e3] pb-3 last:border-b-0"><span className="text-[#6a7971]">{label}</span><span className="font-semibold">{value}</span></div>)}</div></div>
           </div>
         </section>
       </div>

@@ -35,11 +35,11 @@ Stop the log capture after the representative journey completes. The report rank
 
 - `backend/tests/test_observability.py` requires correlation and timing headers, structured privacy-safe route logs, and a bootstrap ceiling of 150 SQL statements and one second against the local test database.
 - `apps/web/e2e/api-contract.spec.ts` requires timing headers through the real Next.js rewrite and caps bootstrap server duration at five seconds in local and hosted E2E.
-- Web lint, typecheck, component tests, production build, integrated browser journey, Modal model/database attestation, and the performance contract run on every relevant `main` deployment.
+- Web lint, typecheck, component tests, production build, browser product/API contracts, Modal model/database attestation, and the performance contract run on every relevant `main` deployment.
 
 ## Optimization loop
 
-1. Run the canonical browser journey to generate representative route and API traffic.
+1. Run the canonical browser product/API contracts to generate representative route and API traffic.
 2. Rank Vercel route Core Web Vitals and Modal request p95; do not optimize averages first.
 3. Use database share and query count to distinguish query/region problems from Python serialization or external API latency.
 4. Make one bounded change, rerun the regression gates, deploy, then compare the same p75/p95 window.

@@ -97,11 +97,9 @@ common_runtime=(
 
 printf '%s' "$MAIN_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$main_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env production -R "$GITHUB_REPOSITORY"
-printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env production -R "$GITHUB_REPOSITORY"
 printf '%s' "$STAGING_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$staging_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env staging -R "$GITHUB_REPOSITORY"
-printf '%s' "$presenter" | gh secret set PRESENTER_ACCESS_CODE --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env staging -R "$GITHUB_REPOSITORY"
 echo "Modal main/staging and GitHub production/staging secrets are synchronized."
 
@@ -125,11 +123,9 @@ if [[ "${RUN_HOSTED_E2E:-1}" == "1" ]]; then
     cd apps/web
     npx playwright install chromium >/dev/null
   )
-  E2E_LIVE_API=1 \
-    E2E_TIMEOUT_MS=1200000 \
-    PRESENTER_ACCESS_CODE="$presenter" \
+  E2E_TIMEOUT_MS=1200000 \
     NEXT_PUBLIC_APP_URL="$WEB_ORIGIN" \
     npm --prefix apps/web run e2e:hosted
-  echo "Hosted seven-chapter synthetic journey is attested."
+  echo "Hosted dermatologist workspace and API contracts are attested."
 fi
 echo "Managed Ambrosia infrastructure is provisioned and attested."

@@ -5,7 +5,6 @@ import {
   Beaker,
   CalendarCheck2,
   Check,
-  Clock3,
   FileCheck2,
   MessageSquareText,
   ShieldCheck,
@@ -18,7 +17,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
-import { attentionItems, patientJourneys, type AttentionItem } from "./platform-data";
+import { attentionItems, patientJourneys, type AttentionItem } from "./platform-fixtures";
 import {
   AgentDock,
   ApprovalReceipt,
@@ -55,8 +54,9 @@ export function TodayScreen() {
   return (
     <ScreenFrame>
       <ScreenHeader
-        title="Your clinic is moving."
-        description={`Ambrosia advanced 46 steps overnight. ${openItems.length || "No"} clinical ${openItems.length === 1 ? "decision needs" : "decisions need"} you; every other journey keeps moving.`}
+        eyebrow="Dermatologist workspace"
+        title="You practice medicine. Ambrosia runs the clinic."
+        description={`Overnight, Ambrosia handled intake, scheduling, follow-up, and billing across 312 patients. ${openItems.length || "No"} clinical ${openItems.length === 1 ? "decision needs" : "decisions need"} you; there is no administrative queue to manage.`}
         action={<div className="flex flex-wrap items-center gap-4"><SystemStatus detail={`${309 + resolved.size} journeys are advancing`} />{openItems.length ? <PrimaryArrow onClick={() => setSelected(openItems[0] ?? null)}>Resolve {openItems.length} stops</PrimaryArrow> : null}</div>}
       />
 
@@ -113,13 +113,13 @@ export function TodayScreen() {
           </section>
 
           <aside>
-            <SectionTitle title="Operating silently" description="Recent autonomous work across clinical, communication, and revenue systems." />
+            <SectionTitle title="The work you didn’t have to staff" description="Recent autonomous work across clinical, communication, and revenue systems." />
             <div className="mt-4 overflow-hidden rounded-xl border border-[#d9dfd8] bg-white">
               {silentEvents.map((event) => { const Icon = event.icon; return <div key={`${event.time}-${event.title}`} className="flex gap-3 border-b border-[#e5e8e3] p-4 last:border-b-0"><span className="font-mono text-[10px] text-[#728078]">{event.time}</span><Icon className="size-4 shrink-0 text-[#2b654b]" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold">{event.title}</p><p className="mt-1 text-[10px] leading-4 text-[#6a7971]">{event.detail}</p></div><span className="text-[9px] text-[#738178]">{event.confidence}</span></div>; })}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><CalendarCheck2 className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Today’s session</p></div><p className="mt-3 font-mono text-2xl font-semibold">18</p><p className="mt-1 text-[10px] text-[#6d7c74]">15 ready · 2 intake · 1 coverage</p></div>
-              <div className="rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><Clock3 className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Time protected</p></div><p className="mt-3 font-mono text-2xl font-semibold">4.8h</p><p className="mt-1 text-[10px] text-[#6d7c74]">estimated staff time this week</p></div>
+              <div className="rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><ShieldCheck className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Admin coverage</p></div><p className="mt-3 font-mono text-2xl font-semibold">100%</p><p className="mt-1 text-[10px] text-[#6d7c74]">intake to payment, operated by Ambrosia</p></div>
             </div>
           </aside>
         </div>

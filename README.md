@@ -1,6 +1,6 @@
 # Ambrosia Health dermatology operating system
 
-Ambrosia is a synthetic-data demonstration of one operating system for dermatology: patient access, clinical documentation, longitudinal lesion tracking, pathology safety, patient communication, revenue cycle, AI-assisted work, and MSO analytics.
+Ambrosia is a synthetic-data demonstration of an AI-native operating system for dermatologists. The clinician sees one workspace for clinical judgment while Ambrosia advances patient access, scheduling, follow-up, pathology, communication, revenue, and practice operations.
 
 > **Synthetic data only.** This repository is not approved for real patient information, clinical care, live claims, prescriptions, laboratory exchange, messaging, or payments. See [data safety](docs/data-safety-security.md) and the [production gates](docs/production-readiness.md).
 
@@ -21,7 +21,7 @@ The hosted demo is live at [ambrosia-ehr.vercel.app](https://ambrosia-ehr.vercel
 
 Structured AI inference calls OpenAI `gpt-5.6-luna` with `reasoning.effort=low` directly from the CPU-only, scale-to-zero Modal domain API; no GPU or separate model endpoint is provisioned. The OpenAI key remains in managed secrets, requests use `store=false`, and capability-specific schema and semantic validation run before output is accepted. Timeout, provider failure, malformed, unsupported, or unsafe output selects a visibly labeled deterministic fallback through the same proposal and human-approval path.
 
-Normal product work needs no hosted credentials. Authorized platform operators can rerun [`scripts/provision-managed-infra.sh`](scripts/provision-managed-infra.sh) to reconcile Neon migrations/seed invariants, rotate and synchronize Modal/GitHub secrets, deploy Modal `main` and `staging`, and fail closed unless API/database health, exact OpenAI model/reasoning provenance, output-schema validation, and the hosted seven-chapter Sarah journey pass. Vercel routing is versioned and needs no runtime environment file. Resource IDs and operating details are recorded in [deployment and operations](docs/deployment.md).
+Normal product work needs no hosted credentials. Authorized platform operators can rerun [`scripts/provision-managed-infra.sh`](scripts/provision-managed-infra.sh) to reconcile Neon migrations/seed invariants, rotate and synchronize Modal/GitHub secrets, deploy Modal `main` and `staging`, and fail closed unless API/database health, exact OpenAI model/reasoning provenance, output-schema validation, the hosted clinician workspace, and the same-origin API contract pass. Vercel routing is versioned and needs no runtime environment file. Resource IDs and operating details are recorded in [deployment and operations](docs/deployment.md).
 
 ## Local development
 
@@ -45,7 +45,7 @@ make check       # lint/type/build/test release checks
 make demo-health # API, same-origin route, and canonical-scenario health
 ```
 
-For the browser journey, reset once, keep `make dev` running, then run `make e2e` in a second terminal. The target supplies the presenter credential from `.env` and forces the live-stack Playwright spec to execute rather than silently skip.
+For browser verification, keep `make dev` running and run `make e2e` in a second terminal. Playwright checks direct entry at `/`, every canonical clinician route, the absence of compatibility routes, and the live same-origin API contract.
 
 Local defaults are safe only for disposable development. Generate unique session/presenter secrets before any shared preview. Hosted environments must use Neon TLS URLs and platform secret stores, never `.env`.
 
@@ -53,7 +53,7 @@ Local defaults are safe only for disposable development. Generate unique session
 
 | Path | Responsibility |
 |---|---|
-| `apps/web` | Next.js patient, clinical, RCM, analytics and presenter UI; same-origin API rewrite |
+| `apps/web` | Next.js dermatologist operating workspace, design system, instrumentation, and same-origin API rewrite |
 | `backend` | FastAPI domain API, SQLAlchemy/Alembic, durable workflows, adapters, AI/fallback and Modal wrapper |
 | `docs` | architecture, schema/FHIR mapping, safety, capability disclosure, deployment and readiness |
 | `.github/workflows` | test/build gates, Vercel preview and Modal deployment |
@@ -61,7 +61,7 @@ Local defaults are safe only for disposable development. Generate unique session
 
 ## Demo and implementation truth
 
-Start with [`DEMO.md`](DEMO.md). [`docs/capabilities.md`](docs/capabilities.md) distinguishes functional internal workflows, deterministic external simulators, AI fallback, and production gaps. UI polish or seed visibility alone is not evidence of persistence or authorization; the integrated tests and health checks are the acceptance evidence.
+Start with [`DEMO.md`](DEMO.md). [`docs/capabilities.md`](docs/capabilities.md) distinguishes the clinician product, functional internal workflows, deterministic external simulators, AI fallback, and production gaps. The current product views use explicit synthetic frontend fixtures; backend persistence and authorization are evidenced independently by API, workflow, and health checks.
 
 Key invariants:
 

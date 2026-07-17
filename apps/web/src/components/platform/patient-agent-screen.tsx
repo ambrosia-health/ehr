@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import { sarahSteps } from "./platform-data";
+import { sarahSteps } from "./platform-fixtures";
 import { AgentDock, ApprovalReceipt, CareRail, ScreenFrame, StatusPill } from "./platform-ui";
 
 const memories = [

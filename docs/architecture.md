@@ -6,7 +6,7 @@ This document is the architectural contract for the Ambrosia synthetic dermatolo
 
 ```mermaid
 flowchart LR
-    B["Browser\npatient · provider · staff · biller · owner"]
+    B["Browser\ndermatologist workspace"]
     V["Vercel\nNext.js 16 UI · same-origin /api rewrite · static synthetic assets"]
     M["Modal\nFastAPI domain API · workers · schedules"]
     O["OpenAI\nGPT-5.6 Luna · low reasoning"]
@@ -39,7 +39,8 @@ The zero-credential local default runs the same FastAPI application under Uvicor
 
 ```mermaid
 flowchart TD
-    UI["Route + UI modules"] --> QC["Typed query/client layer"]
+    FX["Synthetic product fixtures"] --> UI["Clinician route + UI modules"]
+    UI -. "future/live reads and writes" .-> QC["Observable shared API client"]
     QC --> PX["Same-origin API rewrite"]
     PX --> RT["FastAPI routers"]
     RT --> UC["Application use cases"]
@@ -65,24 +66,26 @@ Ownership means the module is the sole writer of its rules and tables. Other mod
 | Module | Primary code surface | Owns | May depend on |
 |---|---|---|---|
 | Web shell and design system | `apps/web/src/app`, `apps/web/src/components` | navigation, visual language, loading/empty/error states, accessibility | typed client and read models |
-| Patient experience | web patient routes; backend engagement/scheduling use cases | initiation, intake, booking, consents, patient messages | identity, clinical facts, eligibility adapter |
-| Command center | web operations routes; backend operations queries | readiness, work queues, alerts, staff tasks | scheduling, clinical, pathology, RCM read models |
-| Clinical encounter | encounter workspace; clinical use cases | encounter state, transcript linkage, note lifecycle, assessment/plan | patients, lesions, orders, AI proposals |
-| Lesions and media | body map/timeline; lesion/media use cases | persistent lesion identity, observations, comparisons, image metadata | clinical encounters, file adapter |
-| Pathology | pathology workspace and use cases | order/specimen/result chain, review, notification, closure | procedures, lesions, messaging, tasks |
-| Revenue cycle | RCM workspace and use cases | eligibility, estimates, claims, events, denials, appeals, payments, balances | encounters, coding proposals, provider adapters |
-| MSO analytics | analytics routes and query services | metric definitions and aggregate queries | committed operational, clinical, and RCM facts |
+| Dermatologist workspace | `apps/web/src/components/platform` and product routes | Today, Patients, Schedule, Inbox, Results, Revenue, Operations, clinician identity and synthetic presentation fixtures | design system; shared API client when live data is introduced |
+| Patient experience | backend engagement/scheduling use cases | initiation, intake, booking, consents, patient messages | identity, clinical facts, eligibility adapter |
+| Command center | Today/Patients/Schedule projections; backend operations queries | readiness, work queues, alerts, tasks | scheduling, clinical, pathology, RCM read models |
+| Clinical encounter | patient care-agent projection; clinical use cases | encounter state, transcript linkage, note lifecycle, assessment/plan | patients, lesions, orders, AI proposals |
+| Lesions and media | care-agent timeline projection; lesion/media use cases | persistent lesion identity, observations, comparisons, image metadata | clinical encounters, file adapter |
+| Pathology | Results workspace and pathology use cases | order/specimen/result chain, review, notification, closure | procedures, lesions, messaging, tasks |
+| Revenue cycle | Revenue workspace and RCM use cases | eligibility, estimates, claims, events, denials, appeals, payments, balances | encounters, coding proposals, provider adapters |
+| MSO analytics | Operations workspace and analytics query services | metric definitions and aggregate queries | committed operational, clinical, and RCM facts |
 | AI orchestration | backend AI application/adapters | prompts, schemas, runs, provenance, fallback, proposed actions | minimum-necessary read APIs; never direct record mutation |
 | Identity and authorization | backend auth/policy | sessions, personas, memberships, role and tenant policy | organization data only |
 | Workflow engine | backend workflow/worker | durable jobs, events, retry/idempotency policy, scheduled jobs | application use cases and Neon |
 | Provider adapters | backend integrations | eligibility, clearinghouse, remittance, SMS, eRx, pathology, payments | stable integration interfaces |
 | Persistence | SQLAlchemy + Alembic | transaction boundaries, constraints, indexes, repository implementations | domain/application contracts |
-| Demo control plane | protected presenter UI + backend demo use cases | canonical reset, simulated clock, trigger idempotency, health | every module through explicit demo APIs |
+| Demo control plane | protected API-only backend use cases | canonical reset, simulated clock, trigger idempotency, release health | every module through explicit demo APIs; never clinician navigation |
 | Delivery and operations | root, `.github`, `docs` | local workflows, CI/CD, environment contract, runbooks | build/test/deploy entrypoints |
 
 Path-level ownership rules:
 
 - `apps/web/**` never imports backend packages or database clients.
+- The current clinician product is fixture-backed by design. UI controls must not claim durable writes until they are connected through the shared API client and covered by integration tests.
 - `backend/**` never imports frontend artifacts.
 - `docs/**` explains contracts; it does not replace executable constraints or tests.
 - Schema changes require an Alembic migration, an updated database document, and compatibility consideration for deployed frontend/backend versions.

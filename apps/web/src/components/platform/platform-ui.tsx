@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import type { JourneyStatus, JourneyStep } from "./platform-data";
+import type { JourneyStatus, JourneyStep } from "./platform-fixtures";
 
 export function ScreenFrame({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("min-h-[calc(100vh-4.75rem)] bg-[#fbfaf6] pb-24 text-[#15392c]", className)}>{children}</div>;

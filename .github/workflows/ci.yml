@@ -90,7 +90,6 @@ jobs:
     env:
       AMBROSIA_API_ORIGIN: http://127.0.0.1:8000
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
-      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
     defaults:
       run:
         working-directory: apps/web
@@ -133,9 +132,6 @@ jobs:
       DATABASE_URL: sqlite+aiosqlite:///./.ambrosia/e2e.db
       AMBROSIA_API_ORIGIN: http://127.0.0.1:8000
       NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
-      NEXT_PUBLIC_DEMO_TEST_MODE: "false"
-      E2E_LIVE_API: "1"
-      PRESENTER_ACCESS_CODE: ambrosia-ci-presenter
     steps:
       - uses: actions/checkout@v4
 
@@ -160,7 +156,7 @@ jobs:
         working-directory: apps/web
         run: npx playwright install --with-deps chromium
 
-      - name: Run integrated browser journey
+      - name: Run product and API browser contracts
         shell: bash
         run: |
           set -euo pipefail
