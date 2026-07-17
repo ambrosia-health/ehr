@@ -16,6 +16,11 @@ SLOW_QUERY_MS = 250.0
 
 logger = logging.getLogger("ambrosia.performance")
 logger.setLevel(logging.INFO)
+if os.environ.get("EXECUTION_PLATFORM", "").lower() == "modal" and not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
 
 
 @dataclass
