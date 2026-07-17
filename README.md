@@ -45,7 +45,7 @@ make check       # lint/type/build/test release checks
 make demo-health # API, same-origin route, and canonical-scenario health
 ```
 
-For browser verification, keep `make dev` running and run `make e2e` in a second terminal. Playwright checks direct entry at `/`, every canonical clinician route, the absence of compatibility routes, and the live same-origin API contract.
+For browser verification, keep `make dev` running and run `make e2e` in a second terminal. Playwright checks direct Today entry, the Patients portfolio, Sarah's focused decision view, Practice, the absence of compatibility routes, and the live same-origin API contract.
 
 Local defaults are safe only for disposable development. Generate unique session/presenter secrets before any shared preview. Hosted environments must use Neon TLS URLs and platform secret stores, never `.env`.
 

@@ -1,78 +1,66 @@
-# Design QA — Ambrosia AI-native clinic platform
+# Design QA — Ambrosia professional option 3
 
-## Visual truth and implementation evidence
+## Visual source and evidence
 
-- Selected visual truth:
-  - `.product-design/reference/ai-native-living-dayline.png`
-  - `.product-design/reference/ai-native-suite/care-horizons.png`
-  - `.product-design/reference/ai-native-suite/sarah-care-agent.png`
-  - `.product-design/reference/ai-native-suite/clinic-intelligence.png`
-- Full-view comparisons, with reference and implementation in the same image:
-  - `.product-design/qa/command-center-comparison.png`
-  - `.product-design/qa/care-horizons-comparison.png`
-- Cross-screen evidence: `.product-design/qa/platform-contact-sheet.png`
-- Focused implementation evidence:
-  - `.product-design/qa/today-viewport-final.png`
-  - `.product-design/qa/today-horizons-final.png`
-  - `.product-design/qa/sarah-agent-final.png`
-  - `.product-design/qa/schedule-final.png`
-  - `.product-design/qa/inbox-final.png`
-  - `.product-design/qa/results-final.png`
-  - `.product-design/qa/revenue-final.png`
-  - `.product-design/qa/operations-final.png`
-  - `.product-design/qa/patient-plan-final.png`
-- Responsive evidence:
-  - `.product-design/qa/today-mobile.png`
-  - `.product-design/qa/inbox-mobile.png`
-- Desktop viewport/state: 1339 × 865, authenticated as Dr. Maya Chen, July 17 synthetic clinic state, `Now` horizon selected.
-- Mobile viewport/state: 390 × 844, same authenticated clinic state.
+- Approved source: option 3, the light institutional “focused decision brief.”
+- Normalized source capture: `.product-design/qa/option-3/reference-patient-viewport.jpg`.
+- Final implementation capture: `.product-design/qa/option-3/implementation-patient-final.jpg`.
+- Required source-left / implementation-right comparison: `.product-design/qa/option-3/comparison-final-reference-left-implementation-right.jpg`.
+- Comparison viewport: 1265 × 712, Patients active, Sarah Mitchell’s first decision open and unapproved.
+- Additional implementation captures cover Today, Patients, and Practice in `.product-design/qa/option-3/`.
 
 ## Comparison history
 
 ### Iteration 1
 
 - P0: none.
-- P1: none.
-- P2, layout: long care rails exceeded their available panel width, obscuring downstream communication, revenue, and closure stages on Today and Sarah's agent.
-- P2, evidence quality: `fullPage` capture was unreliable around fixed navigation and AgentDock surfaces, producing DPR-scaled crops for some screens.
+- P1, decision hierarchy: the biopsy question wrapped to two lines, making the decision block taller than the source.
+- P1, imagery: the clinical image crop hid most of the ruler and the dermoscopy crop was much tighter than the source.
+- P2, page measure: the patient document was slightly wider than the source.
 
 Fixes:
 
-- Added a responsive compact care-rail mode, narrowed Today's patient identity column, and used the compact rail in Today, Sarah's agent, and Schedule. Final DOM measurements show no rail overflow: Today `479 px` viewport/`479 px` scroll width; Sarah `688 px` viewport/`688 px` scroll width.
-- Re-captured canonical viewport states and used a two-state Today story for the cross-screen board. Full-view reference comparisons use normalized, same-state viewport captures.
+- Reduced the question’s responsive type ceiling so it remains a single decisive line at desktop widths.
+- Adjusted the real clinical photograph’s focal point to retain the measurement ruler.
+- Reframed the real dermoscopy asset against black so the complete lesion and optical field read like the source.
+- Tightened the document measure from 1120 px to 1080 px and reduced the decision row’s vertical rhythm.
 
 ### Iteration 2 and final
 
 - P0: none.
 - P1: none.
-- P2: none remaining.
-- P3: dense compact horizons intentionally truncate long step labels while preserving every stage marker, status, sequence, and outcome. Full text is present in the patient agent and associated details.
-- P3: forced local backend restarts generated historical bootstrap-timeout and LCP telemetry warnings. The stable stack completed every tested route and interaction without application exceptions; subsequent client-side navigation remained responsive.
+- P2: none.
+- P3, accepted asset fidelity: the implementation uses the repository’s owned synthetic patient and clinical photography, so fine image detail differs from the generated concept while composition, crop, and density match.
+- P3, accepted icon fidelity: the source’s abstract brand glyph is represented by the closest existing Lucide glyph; no hand-built SVG or CSS asset was introduced.
 
 ## Required surface checks
 
-- Typography: restrained clinical hierarchy, compact operational labels, tabular metrics, and readable patient copy preserve the selected reference's professional density.
-- Spacing and layout: the forest sidebar, cream canvas, fixed operating header, exception-first decisions, longitudinal care rails, and contextual right panels remain aligned across all nine screens.
-- Colors and tokens: forest, warm cream, amber human-stop, muted waiting, red risk, and green completion states map consistently across clinical, communication, and financial work.
-- Imagery: Sarah's generated fictional portrait is sharp, naturally cropped, and integrated as a real Next Image asset. Existing synthetic lesion imagery remains source-backed and includes useful alt text.
-- Icons: Lucide icons are used consistently with matched stroke weight, sizing, and semantic meaning. No fake SVG or CSS-art assets are present.
-- Copy and content: every screen names the work, reason for stopping, accountable owner, permission boundary, next action, and downstream release in plain clinical language.
-- Viewport resilience: desktop and mobile have no document-level horizontal overflow. Mobile collapses to a menu, stacks stats and content, preserves primary actions, and keeps AgentDock available.
-- Accessibility: semantic headings, landmarks, buttons, links, dialogs, tab states, search labels, image alt text, keyboard focusability, and practical mobile targets are present.
-- States and interactions verified in-browser:
-  - Today decision review and six-action release
-  - patient portfolio search and Sarah navigation
-  - Sarah biopsy-plan approval
-  - schedule visit selection
-  - grounded patient-response approval and delivery
-  - pathology disposition and closure receipt
-  - revenue exception approval and release
-  - Operations intelligence switching
-  - patient visit confirmation
-- Runtime checks: TypeScript, ESLint, all 56 component tests across 19 files, and the Next.js production build pass. Twenty routes were generated.
+- Shell: solid white 72 px app bar, blue active underline, three durable destinations, and restrained clinician identity match the source hierarchy. The former dark green sidebar is gone.
+- Patient brief: patient context, decision, recommendation, confidence, deadline, primary action, paired images, and evidence table read as one bordered document rather than a card stack.
+- Today: one prioritized decision, ruled evidence, a compact clinic table, and a quiet automation receipt keep attention on medical judgment.
+- Patients: search, state filters, compact columns, one next action, and Sarah’s deep link remain functional without oversized cards.
+- Practice: operating state, automation health, admin receipts, and advanced controls use flat, dense sections with thin rules.
+- Typography and spacing: restrained Geist hierarchy, compact operational labels, 4–8 px radii, minimal shadow, and consistent 1080–1240 px page measures are applied across all routes.
+- Color: mineral canvas, ink foreground, clinical blue actions, teal evidence/health, amber deadlines, and red-only safety semantics replace the wellness-green palette.
+- Imagery: all patient and lesion assets use optimized `next/image`, useful alt text, explicit responsive sizes, and verified above-the-fold loading.
+- Accessibility: headings, landmarks, table headers, links, buttons, dialogs, native disclosures, progress bars, labels, focus states, image alternatives, and polite approval status are present.
+- Responsive behavior: the desktop navigation becomes a right-side mobile sheet; focused shell tests verify that all destinations remain reachable and the sheet closes after navigation.
+
+## Interaction and runtime checks
+
+- In-app Browser:
+  - Today evidence expands inline; approving Sarah advances immediately to Jordan and updates the status receipt.
+  - Patient Modify opens the editor and persists revised wording; Approve & release disables after release.
+  - Patient search narrows to Sarah and the row opens the focused brief.
+  - Practice Advanced controls opens and exposes policy metadata.
+  - Command-K opens Ask Ambrosia; a suggested command returns a reviewable-plan receipt.
+- Browser health: no application errors or warnings. Local-only Vercel Analytics and Speed Insights script notices remain informational logs, as expected outside a Vercel deployment.
+- Automated gates: ESLint passed; TypeScript passed; all 26 Vitest tests across seven files passed; the optimized Next.js production build passed.
+- Route surface: the production build exposes only `/`, `/_not-found`, `/patients`, `/patients/sarah-mitchell`, and `/practice`.
+- Performance: final warm local document averages were 1.37 ms for `/`, 1.18 ms for `/patients`, 1.19 ms for `/patients/sarah-mitchell`, and 1.11 ms for `/practice`; all remained below the recorded pre-redesign measurements.
 
 ## Final assessment
 
-The platform now reads as one AI operating layer rather than separate EHR modules: clinicians manage only consequential stops, every patient retains a visible long-horizon agent, communication and revenue remain linked to the same care goal, and the patient sees a simpler version of the identical plan. The selected reference's hierarchy, palette, density, and human-boundary model are preserved across the complete clinic workflow.
+The implementation now follows option 3’s professional clinical-document model across the entire product. The most consequential visual mismatches found in the first direct comparison were corrected and the final normalized side-by-side has no P0, P1, or P2 defects.
 
 final result: passed

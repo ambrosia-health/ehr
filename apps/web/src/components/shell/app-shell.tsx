@@ -1,137 +1,166 @@
 "use client";
 
-import {
-  Beaker,
-  CalendarDays,
-  CircleDollarSign,
-  HeartPulse,
-  Menu,
-  MessageSquareText,
-  Settings2,
-  ShieldCheck,
-  UsersRound,
-} from "lucide-react";
+import { ChevronDown, Flower, Menu, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type PropsWithChildren } from "react";
+import { useEffect, useState, type PropsWithChildren } from "react";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
+import { AmbrosiaCommand } from "./ambrosia-command";
+
 const navigation = [
-  { href: "/", label: "Today", icon: CalendarDays },
-  { href: "/patients", label: "Patients", icon: UsersRound },
-  { href: "/schedule", label: "Schedule", icon: CalendarDays },
-  { href: "/messages", label: "Inbox", icon: MessageSquareText },
-  { href: "/pathology", label: "Results", icon: Beaker },
-  { href: "/rcm", label: "Revenue", icon: CircleDollarSign },
-  { href: "/mso", label: "Operations", icon: Settings2 },
+  { href: "/", label: "Today" },
+  { href: "/patients", label: "Patients" },
+  { href: "/practice", label: "Practice" },
 ] as const;
 
-export function Brand({ onNavigate, inverse = false }: { onNavigate?: () => void; inverse?: boolean }) {
+interface BrandProps {
+  onNavigate?: () => void;
+}
+
+export function Brand({ onNavigate }: BrandProps) {
   return (
-    <Link href="/" className={cn("flex items-center gap-2.5", inverse && "text-white")} aria-label="Ambrosia home" onClick={onNavigate}>
-      <span className={cn("flex size-9 items-center justify-center rounded-xl border shadow-sm", inverse ? "border-white/25 bg-white/10 text-white" : "border-primary/15 bg-primary text-primary-foreground")}>
-        <HeartPulse className="size-4.5" />
-      </span>
-      <span>
-        <span className="block text-sm font-semibold tracking-[-0.025em]">Ambrosia</span>
-        <span className={cn("block text-[10px] font-medium uppercase tracking-[0.2em]", inverse ? "text-white/66" : "text-muted-foreground")}>Health</span>
-      </span>
+    <Link
+      href="/"
+      className="flex shrink-0 items-center gap-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4"
+      aria-label="Ambrosia home"
+      onClick={onNavigate}
+    >
+      <Flower className="size-8 text-primary" strokeWidth={2.5} aria-hidden="true" />
+      <span className="text-lg font-semibold tracking-[-0.035em]">Ambrosia</span>
     </Link>
   );
 }
 
-function MainNavigation({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {
+interface MainNavigationProps {
+  mobile?: boolean;
+  onNavigate?: () => void;
+}
+
+function MainNavigation({ mobile = false, onNavigate }: MainNavigationProps) {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Primary navigation">
-      <div className="space-y-0.5">
-        {navigation.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
-          const Icon = item.icon;
+    <nav
+      aria-label="Primary navigation"
+      className={cn(mobile ? "grid gap-1" : "flex h-full items-stretch gap-2")}
+    >
+      {navigation.map((item) => {
+        const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "group flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-white/72 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-                active && "bg-white/16 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
-                mobile && "h-11",
-              )}
-              aria-current={active ? "page" : undefined}
-              onClick={onNavigate}
-            >
-              <Icon className={cn("size-4", active ? "text-white" : "text-white/72")} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            onClick={onNavigate}
+            className={cn(
+              "text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              mobile
+                ? "flex h-11 items-center rounded-md border-l-[3px] border-transparent px-4 text-muted-foreground hover:bg-muted hover:text-foreground"
+                : "flex h-[4.5rem] items-center border-b-[3px] border-transparent px-3 pt-[3px] text-muted-foreground hover:text-foreground",
+              active && (mobile
+                ? "border-primary bg-secondary text-primary"
+                : "border-primary text-foreground"),
+            )}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
 
 function ClinicianIdentity() {
   return (
-    <div className="flex items-center gap-2 px-2 py-1.5" aria-label="Current dermatologist">
-      <Avatar className="size-8 border bg-card">
-        <AvatarFallback className="bg-primary/8 text-xs font-semibold text-primary">MC</AvatarFallback>
+    <div className="flex items-center gap-3" aria-label="Current dermatologist">
+      <Avatar className="size-10 border border-border bg-card">
+        <AvatarFallback className="bg-card text-xs font-medium text-foreground">MC</AvatarFallback>
       </Avatar>
-      <span className="hidden min-w-0 text-left sm:block">
-        <span className="block truncate text-xs font-semibold text-foreground">Dr. Maya Chen</span>
-        <span className="block truncate text-[11px] font-normal text-muted-foreground">Dermatologist</span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold leading-5 text-foreground">Dr. Maya Chen</span>
+        <span className="block truncate text-[11px] leading-4 text-muted-foreground">Midtown Dermatology</span>
       </span>
+      <ChevronDown className="ml-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
     </div>
   );
 }
 
 export function AppShell({ children }: PropsWithChildren) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  useEffect(() => {
+    function openCommand(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+      }
+    }
+
+    window.addEventListener("keydown", openCommand);
+    return () => window.removeEventListener("keydown", openCommand);
+  }, []);
 
   return (
-    <div className="min-h-screen bg-[#fbfaf6] text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 bg-[#123f30] text-white lg:flex lg:flex-col">
-        <div className="flex h-[4.75rem] items-center px-5"><Brand inverse /></div>
-        <Separator className="bg-white/10" />
-        <ScrollArea className="flex-1 px-3 py-5"><MainNavigation /></ScrollArea>
-        <div className="border-t border-white/10 p-3">
-          <div className="rounded-lg border border-white/12 bg-white/7 p-3">
-            <div className="flex items-center gap-2 text-[11px] font-medium text-white"><span className="flex size-5 items-center justify-center rounded-full border border-white/25"><ShieldCheck className="size-3" /></span> Ambrosia is operating</div>
-            <p className="mt-2 text-[10px] leading-4 text-white/60">Intake, scheduling, follow-up, and revenue are moving. Clinical judgment waits for you.</p>
-          </div>
-          <div className="px-3 pb-2 pt-4"><p className="text-xs font-semibold text-white">Midtown Dermatology</p><p className="mt-1 text-[10px] text-white/55">New York, NY</p></div>
-        </div>
-      </aside>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="sticky top-0 z-40 h-16 border-b border-border bg-card lg:h-[4.5rem]">
+        <div className="flex h-full w-full items-center px-4 sm:px-6 lg:px-7">
+          <Brand />
 
-      <div className="lg:pl-60">
-        <header className="sticky top-0 z-20 grid h-[4.75rem] grid-cols-[1fr_auto] items-center gap-5 border-b border-[#dce3db] bg-[#fffefa]/94 px-4 backdrop-blur sm:px-6 lg:grid-cols-[1fr_auto_1fr] lg:px-7">
-          <div className="flex items-center gap-3">
-            <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
-              <SheetTrigger asChild><Button variant="outline" size="icon-sm" className="lg:hidden" aria-label="Open navigation"><Menu /></Button></SheetTrigger>
-              <SheetContent side="left" className="w-72 border-0 bg-[#123f30] p-0 text-white">
-                <SheetTitle className="sr-only">Navigation</SheetTitle>
-                <div className="flex h-[4.75rem] items-center px-5"><Brand inverse onNavigate={() => setMobileNavigationOpen(false)} /></div>
-                <Separator className="bg-white/10" />
-                <div className="p-4"><MainNavigation mobile onNavigate={() => setMobileNavigationOpen(false)} /></div>
-              </SheetContent>
-            </Sheet>
-            <div className="hidden sm:block"><p className="text-sm font-semibold tracking-[-0.02em] text-[#15392c]">Midtown Dermatology</p><p className="mt-0.5 text-[10px] text-[#718078]">New York, NY</p></div>
+          <div className="ml-12 hidden h-full lg:block">
+            <MainNavigation />
           </div>
-          <div className="hidden text-center text-xs font-medium text-[#3e554a] lg:block">Jul 17, 2026</div>
-          <div className="flex items-center justify-end gap-3">
-            <div className="hidden items-center gap-2 text-right xl:flex"><ShieldCheck className="size-5 text-[#1f5b42]" /><div><p className="text-[10px] font-semibold text-[#284c3b]">Clinical decisions wait for you</p><p className="mt-0.5 text-[9px] text-[#718078]">Administrative work keeps moving</p></div></div>
+
+          <div className="ml-auto hidden items-center lg:flex">
             <ClinicianIdentity />
+            <span className="sr-only">Press Command K to ask Ambrosia</span>
           </div>
-        </header>
-        <main className="mx-auto min-h-[calc(100vh-4.75rem)] max-w-none p-0">{children}</main>
-      </div>
+
+          <Sheet open={mobileNavigationOpen} onOpenChange={setMobileNavigationOpen}>
+            <SheetTrigger asChild>
+              <Button className="ml-auto lg:hidden" variant="outline" size="icon" aria-label="Open navigation">
+                <Menu className="size-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[19rem] border-l border-border bg-card p-0 sm:max-w-[19rem]">
+              <SheetTitle className="sr-only">Navigation</SheetTitle>
+              <div className="flex h-full flex-col px-5 py-6">
+                <Brand onNavigate={() => setMobileNavigationOpen(false)} />
+                <div className="mt-9">
+                  <MainNavigation mobile onNavigate={() => setMobileNavigationOpen(false)} />
+                </div>
+                <div className="mt-6 border-t border-border pt-6">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 w-full justify-start rounded-md text-primary"
+                    onClick={() => {
+                      setMobileNavigationOpen(false);
+                      setCommandOpen(true);
+                    }}
+                  >
+                    <Sparkles className="size-4" />
+                    Ask Ambrosia
+                  </Button>
+                </div>
+                <div className="mt-auto border-t border-border pt-5">
+                  <ClinicianIdentity />
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+      </header>
+
+      <div className="min-h-[calc(100vh-4rem)] lg:min-h-[calc(100vh-4.5rem)]">{children}</div>
+
+      <AmbrosiaCommand open={commandOpen} onOpenChange={setCommandOpen} />
     </div>
   );
 }

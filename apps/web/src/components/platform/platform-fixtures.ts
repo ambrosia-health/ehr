@@ -1,15 +1,6 @@
-import type { ComponentType } from "react";
-
 // Synthetic presentation fixtures. These values are not loaded from Modal or persisted to Neon.
 
 export type JourneyStatus = "complete" | "moving" | "waiting" | "human" | "risk";
-
-export interface JourneyStep {
-  label: string;
-  detail: string;
-  meta?: string;
-  status: JourneyStatus;
-}
 
 export interface PatientJourney {
   id: string;
@@ -23,9 +14,6 @@ export interface PatientJourney {
   state: "Needs clinician" | "Advancing" | "Waiting external" | "Waiting patient" | "At risk";
   next: string;
   lastEvent: string;
-  owner: string;
-  horizon: string;
-  steps: JourneyStep[];
 }
 
 export interface AttentionItem {
@@ -42,18 +30,6 @@ export interface AttentionItem {
   severity: "human" | "risk";
 }
 
-export const sarahSteps: JourneyStep[] = [
-  { label: "Intake", detail: "Complete", meta: "Jul 13 · Sarah", status: "complete" },
-  { label: "Coverage", detail: "Verified", meta: "Blue Horizon PPO", status: "complete" },
-  { label: "Previsit", detail: "Synthesis ready", meta: "92% confidence", status: "complete" },
-  { label: "Clinical decision", detail: "Review biopsy plan", meta: "Waiting for you", status: "human" },
-  { label: "Procedure", detail: "Shave biopsy", meta: "Mon, Jul 20", status: "moving" },
-  { label: "Pathology", detail: "Specimen monitor", meta: "2–3 business days", status: "moving" },
-  { label: "Communication", detail: "Result explanation", meta: "Prepared after review", status: "moving" },
-  { label: "Revenue", detail: "Claim & estimate", meta: "$85 expected", status: "moving" },
-  { label: "Closure", detail: "Surveillance", meta: "Aug 17", status: "moving" },
-];
-
 export const patientJourneys: PatientJourney[] = [
   {
     id: "sarah-mitchell",
@@ -67,9 +43,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Needs clinician",
     next: "Review biopsy plan · now",
     lastEvent: "Previsit synthesis completed · 8:09 AM",
-    owner: "Dr. Chen",
-    horizon: "Today",
-    steps: sarahSteps,
   },
   {
     id: "alex-rivera",
@@ -83,15 +56,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Advancing",
     next: "Patient photo check · tomorrow",
     lastEvent: "Medication plan released · 9:29 AM",
-    owner: "Ambrosia",
-    horizon: "48 hours",
-    steps: [
-      { label: "Visit", detail: "Complete", meta: "9:15 AM", status: "complete" },
-      { label: "Medication", detail: "Plan released", meta: "Tretinoin 0.05%", status: "complete" },
-      { label: "Check-in", detail: "Photo request", meta: "Tomorrow", status: "moving" },
-      { label: "Progress", detail: "Review", meta: "Next week", status: "moving" },
-      { label: "Maintenance", detail: "Quarterly", meta: "Aug–Dec", status: "moving" },
-    ],
   },
   {
     id: "natalie-wong",
@@ -105,15 +69,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Waiting external",
     next: "CBC/CMP expected · Jul 20",
     lastEvent: "Lab order reconciled · 11:05 AM",
-    owner: "Lab → Dr. Chen",
-    horizon: "7 days",
-    steps: [
-      { label: "Visit", detail: "Complete", meta: "11:00 AM", status: "complete" },
-      { label: "Labs", detail: "Ordered", meta: "Labcorp", status: "complete" },
-      { label: "Results", detail: "Waiting on lab", meta: "Expected Jul 20", status: "waiting" },
-      { label: "Treatment", detail: "Review", meta: "Next week", status: "moving" },
-      { label: "Outcomes", detail: "Patient report", meta: "Aug 28", status: "moving" },
-    ],
   },
   {
     id: "jordan-lee",
@@ -127,15 +82,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Waiting patient",
     next: "Wound photo · tomorrow",
     lastEvent: "Wound instructions delivered · yesterday",
-    owner: "Ambrosia",
-    horizon: "48 hours",
-    steps: [
-      { label: "Mohs", detail: "Complete", meta: "Yesterday", status: "complete" },
-      { label: "Repair", detail: "Complete", meta: "Primary closure", status: "complete" },
-      { label: "Photo check", detail: "Waiting on Jordan", meta: "Tomorrow", status: "waiting" },
-      { label: "Suture removal", detail: "Scheduled", meta: "Next week", status: "moving" },
-      { label: "Scar review", detail: "Planned", meta: "Aug 28", status: "moving" },
-    ],
   },
   {
     id: "benjamin-carter",
@@ -149,15 +95,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Advancing",
     next: "Routine surveillance · Jan 2027",
     lastEvent: "Payment reconciled · 11:52 AM",
-    owner: "Ambrosia",
-    horizon: "Closure",
-    steps: [
-      { label: "Visit", detail: "Complete", meta: "11:45 AM", status: "complete" },
-      { label: "Documentation", detail: "Signed", meta: "11:49 AM", status: "complete" },
-      { label: "Communication", detail: "After-visit summary", meta: "Read", status: "complete" },
-      { label: "Payment", detail: "Collected", meta: "$40.00", status: "complete" },
-      { label: "Closure", detail: "Complete", meta: "Annual recall", status: "complete" },
-    ],
   },
   {
     id: "emily-lopez",
@@ -171,15 +108,6 @@ export const patientJourneys: PatientJourney[] = [
     state: "Advancing",
     next: "Treatment response check · Jul 23",
     lastEvent: "Aftercare delivered · 12:42 PM",
-    owner: "Ambrosia / Dr. Chen",
-    horizon: "7 days",
-    steps: [
-      { label: "Visit", detail: "Complete", meta: "12:35 PM", status: "complete" },
-      { label: "Plan", detail: "Released", meta: "Topical steroid", status: "complete" },
-      { label: "Aftercare", detail: "Read", meta: "12:51 PM", status: "complete" },
-      { label: "Response", detail: "Check-in", meta: "Jul 23", status: "moving" },
-      { label: "Closure", detail: "Follow-up", meta: "As needed", status: "moving" },
-    ],
   },
 ];
 
@@ -231,10 +159,4 @@ export const stateTone = {
   "Waiting external": "waiting",
   "Waiting patient": "waiting",
   "At risk": "risk",
-} as const;
-
-export interface PlatformNavItem {
-  label: string;
-  href: string;
-  icon: ComponentType<{ className?: string }>;
-}
+} as const satisfies Record<PatientJourney["state"], JourneyStatus>;

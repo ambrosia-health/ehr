@@ -1,149 +1,286 @@
 "use client";
 
 import {
-  ArrowUpRight,
-  Beaker,
-  CalendarCheck2,
+  CalendarDays,
   Check,
+  CheckCircle2,
+  ChevronRight,
+  Clock3,
+  Eye,
   FileCheck2,
   MessageSquareText,
+  PencilLine,
   ShieldCheck,
-  Sparkles,
-  Stethoscope,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-
-import { attentionItems, patientJourneys, type AttentionItem } from "./platform-fixtures";
 import {
-  AgentDock,
-  ApprovalReceipt,
-  CareRail,
-  HorizonTabs,
-  PatientMark,
-  PortfolioStat,
-  PrimaryArrow,
-  ScreenFrame,
-  ScreenHeader,
-  SectionTitle,
-  StatusPill,
-  SystemStatus,
-} from "./platform-ui";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 
-const silentEvents = [
-  { time: "8:14", icon: FileCheck2, title: "Previsit synthesis completed", detail: "Emily Lopez · 14 sources reconciled", confidence: "94%" },
-  { time: "8:12", icon: Beaker, title: "Pathology monitor advanced", detail: "Jordan Lee · result matched to specimen", confidence: "98%" },
-  { time: "8:10", icon: MessageSquareText, title: "Aftercare delivered", detail: "Alex Rivera · portal read receipt received", confidence: "Policy" },
-  { time: "8:07", icon: ShieldCheck, title: "Coverage verified", detail: "Sarah Mitchell · Blue Horizon PPO", confidence: "99%" },
-];
+import { attentionItems, type AttentionItem } from "./platform-fixtures";
+
+const visits = [
+  { time: "8:30 AM", patient: "Sarah Mitchell", reason: "Changing lesion", state: "Needs review", href: "/patients/sarah-mitchell" },
+  { time: "9:15 AM", patient: "Alex Rivera", reason: "Psoriasis follow-up", state: "Ready", href: "/patients" },
+  { time: "10:00 AM", patient: "Priya Shah", reason: "Acne program", state: "Ready", href: "/patients" },
+] as const;
+
+interface DecisionDetail {
+  summary: string;
+  explanation: string;
+  plan: string;
+  planDetail: string;
+  signals: Array<{ title: string; detail: string }>;
+  receipt: string;
+}
+
+const decisionDetails: Record<string, DecisionDetail> = {
+  "sarah-biopsy": {
+    summary: "This lesion changed since her last visit.",
+    explanation: "Ambrosia paused the routine follow-up because the new photo and message suggest she should be seen sooner.",
+    plan: "Convert today’s visit to urgent dermoscopy",
+    planDetail: "Keep the 8:30 slot, prepare consent and the dermoscopy template, and hold biopsy supplies only if the exam confirms concern.",
+    signals: [
+      { title: "Visible change", detail: "The new photo differs from the baseline captured seven months ago." },
+      { title: "Patient concern", detail: "Sarah describes recent darkening and a rough edge." },
+      { title: "Timing mismatch", detail: "The routine plan would otherwise wait another four weeks." },
+    ],
+    receipt: "Slot protected · chart summarized · supplies checked · patient update drafted",
+  },
+  "jordan-pathology": {
+    summary: "Jordan’s pathology needs a clinical disposition.",
+    explanation: "The final report confirms nodular basal cell carcinoma. Ambrosia prepared the referral path but cannot choose or explain treatment.",
+    plan: "Confirm Mohs referral and patient explanation",
+    planDetail: "Release the referral, open scheduling outreach, and send the reviewed explanation through the secure portal.",
+    signals: [
+      { title: "Final diagnosis", detail: "Dermpath finalized nodular basal cell carcinoma at 11:02 AM." },
+      { title: "Closure required", detail: "A result is not closed until disposition, notification, and follow-up are documented." },
+      { title: "SLA approaching", detail: "The clinician review window closes in two hours." },
+    ],
+    receipt: "Report reconciled · referral drafted · explanation prepared · SLA monitor open",
+  },
+  "natalie-symptoms": {
+    summary: "Natalie reported a new safety symptom.",
+    explanation: "New joint pain sits outside the routine psoriasis check-in policy, so the automated response stopped before offering clinical advice.",
+    plan: "Choose a same-day triage disposition",
+    planDetail: "Review symptom severity, confirm the safest response, and release the acknowledgment plus any needed lab or visit coordination.",
+    signals: [
+      { title: "New symptom", detail: "Joint pain was not present in the previous biologic monitoring check-in." },
+      { title: "Treatment context", detail: "The symptom may change the current monitoring plan." },
+      { title: "Patient waiting", detail: "Natalie has been waiting for a reviewed response for 47 minutes." },
+    ],
+    receipt: "Message classified · chart context gathered · acknowledgment drafted · monitor open",
+  },
+};
 
 export function TodayScreen() {
-  const [horizon, setHorizon] = useState("Now");
-  const [selected, setSelected] = useState<AttentionItem | null>(null);
   const [resolved, setResolved] = useState<Set<string>>(() => new Set());
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [editedPlans, setEditedPlans] = useState<Record<string, string>>({});
+  const [lastApproved, setLastApproved] = useState<string | null>(null);
+
   const openItems = useMemo(() => attentionItems.filter((item) => !resolved.has(item.id)), [resolved]);
-  const journeys = horizon === "Now" ? patientJourneys.slice(0, 4) : horizon === "24 hours" ? patientJourneys.slice(1, 5) : patientJourneys.slice(2);
+  const current = openItems[0] ?? null;
+  const detail = current ? decisionDetails[current.id] : null;
+  const estimatedMinutes = Math.max(0, openItems.length * 2 + (openItems.length > 1 ? 2 : 0));
 
   function approve(item: AttentionItem) {
-    setResolved((current) => new Set(current).add(item.id));
+    setResolved((currentResolved) => new Set(currentResolved).add(item.id));
+    setLastApproved(item.patient);
+    setShowEvidence(false);
+    setEditOpen(false);
+  }
+
+  function openEditor() {
+    if (!current || !detail) return;
+    setDraft(editedPlans[current.id] ?? detail.plan);
+    setEditOpen(true);
+  }
+
+  function saveDraft() {
+    if (!current || !draft.trim()) return;
+    setEditedPlans((plans) => ({ ...plans, [current.id]: draft.trim() }));
+    setEditOpen(false);
   }
 
   return (
-    <ScreenFrame>
-      <ScreenHeader
-        eyebrow="Dermatologist workspace"
-        title="You practice medicine. Ambrosia runs the clinic."
-        description={`Overnight, Ambrosia handled intake, scheduling, follow-up, and billing across 312 patients. ${openItems.length || "No"} clinical ${openItems.length === 1 ? "decision needs" : "decisions need"} you; there is no administrative queue to manage.`}
-        action={<div className="flex flex-wrap items-center gap-4"><SystemStatus detail={`${309 + resolved.size} journeys are advancing`} />{openItems.length ? <PrimaryArrow onClick={() => setSelected(openItems[0] ?? null)}>Resolve {openItems.length} stops</PrimaryArrow> : null}</div>}
-      />
+    <main className="min-h-[calc(100vh-4.5rem)] bg-background px-4 py-7 text-foreground sm:px-7 lg:px-10 lg:py-9">
+      <div className="mx-auto max-w-[1120px]">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.13em] text-primary">Friday, July 17</p>
+            <h1 className="mt-1.5 text-[28px] font-semibold tracking-[-0.035em] text-foreground sm:text-[32px]">Good morning, Maya.</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">Clinical judgment first. Ambrosia is coordinating everything around it.</p>
+          </div>
+          <div className="flex items-center gap-3 border-l-2 border-decision pl-3 text-sm sm:text-right">
+            <CalendarDays className="size-4 text-decision" aria-hidden="true" />
+            <div>
+              <p className="font-medium text-foreground">Clinic starts at 8:30 AM</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">10 visits · all charts prepared</p>
+            </div>
+          </div>
+        </header>
 
-      <section className="border-b border-[#dce3db] px-5 py-5 sm:px-8 lg:px-10" aria-label="Clinic portfolio summary">
-        <div className="mx-auto grid max-w-[1480px] grid-cols-2 gap-y-5 md:grid-cols-5">
-          <PortfolioStat value="312" label="active care journeys" status="moving" />
-          <PortfolioStat value={`${278 + resolved.size}`} label="advancing safely" status="complete" />
-          <PortfolioStat value="19" label="waiting on external systems" status="waiting" />
-          <PortfolioStat value="12" label="waiting on patients" status="waiting" />
-          <PortfolioStat value={String(openItems.length)} label="need clinician judgment" status="human" active={openItems.length > 0} />
-        </div>
-      </section>
+        {lastApproved ? (
+          <div role="status" className="mt-5 flex items-center gap-2.5 border border-primary/20 bg-secondary px-4 py-3 text-xs text-secondary-foreground">
+            <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            {lastApproved}’s approved plan is moving. The next decision is ready.
+          </div>
+        ) : null}
 
-      <HorizonTabs value={horizon} onChange={setHorizon} />
+        <section className="mt-7 overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="decision-worklist-title">
+          <div className="flex flex-col gap-2 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div>
+              <h2 id="decision-worklist-title" className="text-sm font-semibold text-foreground">Clinical decisions</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Only work that requires your judgment appears here.</p>
+            </div>
+            <p className="text-xs font-medium text-decision">{openItems.length} {openItems.length === 1 ? "decision" : "decisions"} · about {estimatedMinutes} min</p>
+          </div>
 
-      <div className="mx-auto max-w-[1480px] px-5 py-7 sm:px-8 lg:px-10">
-        <section id="decisions">
-          <SectionTitle title={`Needs your judgment · ${openItems.length}`} description="Ambrosia stops only where clinical judgment, attestation, or conflicting evidence requires a person." action={<span className="text-[10px] text-[#74827a]">Ordered by clinical risk and deadline</span>} />
-          {openItems.length ? <div className="mt-4 grid gap-3 xl:grid-cols-3">
-            {openItems.map((item) => (
-              <article key={item.id} className="group flex min-h-[260px] flex-col rounded-xl border border-[#d9dfd8] bg-white p-5 shadow-[0_10px_35px_rgba(20,61,45,0.035)] transition-all hover:-translate-y-0.5 hover:border-[#c9d3ca] hover:shadow-[0_14px_40px_rgba(20,61,45,0.07)]">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3"><PatientMark initials={item.initials} /><div><p className="text-sm font-semibold">{item.patient}</p><p className="text-[10px] text-[#6c7a72]">{item.episode} · {item.domain}</p></div></div>
-                  <StatusPill status={item.severity}>{item.due}</StatusPill>
+          {current && detail ? (
+            <article aria-labelledby="current-decision">
+              <div className="grid lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.9fr)_210px]">
+                <div className="px-5 py-6 sm:px-6 lg:border-r lg:border-border">
+                  <div className="flex items-center justify-between gap-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">Decision {resolved.size + 1} of {attentionItems.length}</p>
+                    <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"><Clock3 className="size-3.5" aria-hidden="true" />About 2 min</span>
+                  </div>
+                  <div className="mt-5 flex items-center gap-3">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-[11px] font-semibold text-foreground">{current.initials}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-foreground">{current.patient}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{current.episode} · {current.due}</p>
+                    </div>
+                  </div>
+                  <h3 id="current-decision" className="mt-5 max-w-2xl text-[24px] font-semibold leading-[1.2] tracking-[-0.035em] text-foreground">{detail.summary}</h3>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">{detail.explanation}</p>
                 </div>
-                <div className="mt-5 border-l-2 border-[#d17a11] pl-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#a45a05]">Why Ambrosia stopped</p>
-                  <p className="mt-2 text-xs leading-5 text-[#4b5d54]">{item.reason}</p>
+
+                <div className="border-t border-border bg-muted/45 px-5 py-6 sm:px-6 lg:border-t-0 lg:border-r">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">Recommended plan</p>
+                  <h3 className="mt-3 text-lg font-semibold leading-snug tracking-[-0.02em] text-foreground">{editedPlans[current.id] ?? detail.plan}</h3>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{detail.planDetail}</p>
+                  <div className="mt-5 flex items-center gap-3 border-t border-border pt-4">
+                    <ShieldCheck className="size-5 text-[#167681]" aria-hidden="true" />
+                    <div><p className="text-xl font-semibold tracking-[-0.03em] text-[#116d78]">{current.confidence}%</p><p className="text-[10px] text-muted-foreground">confidence</p></div>
+                  </div>
                 </div>
-                <div className="mt-4"><p className="text-[10px] text-[#718078]">Recommended next step</p><p className="mt-1 text-sm font-semibold leading-5">{item.recommendation}</p></div>
-                <div className="mt-auto flex items-end justify-between gap-3 pt-5">
-                  <p className="text-[10px] leading-4 text-[#6d7c74]">{item.confidence}% confidence<br />{item.release.split(",").length} downstream actions staged</p>
-                  <Button size="sm" onClick={() => setSelected(item)} className="bg-[#c76c00] text-white hover:bg-[#a95c00]">Review <ArrowUpRight className="size-3.5" /></Button>
+
+                <div className="border-t border-border px-5 py-6 lg:border-t-0">
+                  <div className="flex items-start gap-2 text-decision">
+                    <Clock3 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                    <div><p className="text-xs font-semibold">Review before visit</p><p className="mt-0.5 text-[11px] text-muted-foreground">{current.due}</p></div>
+                  </div>
+                  <div className="mt-5 grid gap-2">
+                    <Button className="h-11 rounded-md bg-primary px-4 text-primary-foreground shadow-none hover:bg-primary/90" onClick={() => approve(current)}>
+                      <Check className="size-4" />Approve plan
+                    </Button>
+                    <Button variant="outline" className="h-11 rounded-md shadow-none" onClick={openEditor}><PencilLine className="size-4" />Modify</Button>
+                    <Button variant="ghost" className="h-9 rounded-md text-xs" aria-expanded={showEvidence} onClick={() => setShowEvidence((visible) => !visible)}>
+                      <Eye className="size-3.5" />{showEvidence ? "Hide evidence" : "View evidence"}
+                    </Button>
+                  </div>
                 </div>
-              </article>
-            ))}
-          </div> : <div className="mt-4"><ApprovalReceipt><p className="font-semibold">All clinical stops are resolved.</p><p className="mt-1 text-xs text-[#557064]">Ambrosia released the approved downstream actions and continues monitoring every journey.</p></ApprovalReceipt></div>}
+              </div>
+
+              <div className="border-t border-border">
+                <div className="grid divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                  {detail.signals.map((signal) => (
+                    <div key={signal.title} className="px-5 py-4">
+                      <p className="text-xs font-semibold text-foreground">{signal.title}</p>
+                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{signal.detail}</p>
+                    </div>
+                  ))}
+                </div>
+                {showEvidence ? (
+                  <div role="region" aria-label="Evidence summary" className="border-t border-border bg-secondary/60 px-5 py-4 text-xs leading-5 text-secondary-foreground sm:px-6">
+                    Recommendation uses the photo delta, patient message, lesion history, active medications, and today’s available visit slot. Policy version 3.4.2; evidence is linked in the chart.
+                  </div>
+                ) : null}
+                <div className="flex items-start gap-2 border-t border-border px-5 py-3 text-[11px] text-muted-foreground sm:px-6">
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[#167681]" aria-hidden="true" />
+                  <span><strong className="font-semibold text-foreground">Already handled:</strong> {detail.receipt}</span>
+                </div>
+              </div>
+            </article>
+          ) : (
+            <div className="px-6 py-12 text-center">
+              <span className="mx-auto flex size-10 items-center justify-center rounded-full bg-secondary text-primary"><Check className="size-5" /></span>
+              <h2 className="mt-4 text-lg font-semibold">All decisions are clear.</h2>
+              <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Ambrosia released the approved work and will interrupt you only when new clinical judgment is required.</p>
+            </div>
+          )}
         </section>
 
-        <div className="mt-9 grid gap-7 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.55fr)]">
-          <section className="min-w-0">
-            <SectionTitle title={`${horizon} care horizons`} description={`${journeys.length} representative journeys; the full portfolio remains searchable in Patients.`} action={<Button asChild variant="outline" size="sm"><Link href="/patients">View all 312 patients</Link></Button>} />
-            <div className="mt-4 overflow-hidden rounded-xl border border-[#d9dfd8] bg-white">
-              {journeys.map((journey) => (
-                <div key={journey.id} className="grid border-b border-[#e1e6df] last:border-b-0 lg:grid-cols-[190px_minmax(0,1fr)]">
-                  <Link href={journey.id === "sarah-mitchell" ? "/patients/sarah-mitchell" : "/patients"} className="flex items-start gap-3 border-b border-[#e1e6df] p-4 hover:bg-[#f6f8f3] lg:border-b-0 lg:border-r">
-                    <PatientMark initials={journey.initials} />
-                    <span className="min-w-0"><span className="block text-xs font-semibold">{journey.name}</span><span className="mt-1 block text-[10px] text-[#6c7a72]">{journey.concern}</span><span className="mt-2 block text-[10px] leading-4 text-[#3d594b]">{journey.goal}</span></span>
-                  </Link>
-                  <div className="overflow-x-auto p-4"><CareRail steps={journey.steps} compact /></div>
-                </div>
-              ))}
+        <section className="mt-7 overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="today-schedule-title">
+          <div className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-6">
+            <div>
+              <h2 id="today-schedule-title" className="text-sm font-semibold">Today’s clinic</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">First visits; seven more are ready.</p>
             </div>
-          </section>
+            <Link href="/patients" className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">View patients <ChevronRight className="size-3.5" /></Link>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[650px] text-left text-xs">
+              <thead className="bg-muted/60 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                <tr><th className="px-6 py-2.5">Time</th><th className="px-4 py-2.5">Patient</th><th className="px-4 py-2.5">Visit</th><th className="px-6 py-2.5 text-right">Preparation</th></tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visits.map((visit, index) => (
+                  <tr key={`${visit.time}-${visit.patient}`} className="transition-colors hover:bg-muted/35">
+                    <td className="px-6 py-3.5 font-medium text-foreground">{visit.time}</td>
+                    <td className="px-4 py-3.5"><Link className="font-semibold text-foreground hover:text-primary hover:underline" href={visit.href}>{visit.patient}</Link></td>
+                    <td className="px-4 py-3.5 text-muted-foreground">{visit.reason}</td>
+                    <td className={index === 0 ? "px-6 py-3.5 text-right font-medium text-decision" : "px-6 py-3.5 text-right font-medium text-[#167681]"}>{visit.state}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-          <aside>
-            <SectionTitle title="The work you didn’t have to staff" description="Recent autonomous work across clinical, communication, and revenue systems." />
-            <div className="mt-4 overflow-hidden rounded-xl border border-[#d9dfd8] bg-white">
-              {silentEvents.map((event) => { const Icon = event.icon; return <div key={`${event.time}-${event.title}`} className="flex gap-3 border-b border-[#e5e8e3] p-4 last:border-b-0"><span className="font-mono text-[10px] text-[#728078]">{event.time}</span><Icon className="size-4 shrink-0 text-[#2b654b]" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold">{event.title}</p><p className="mt-1 text-[10px] leading-4 text-[#6a7971]">{event.detail}</p></div><span className="text-[9px] text-[#738178]">{event.confidence}</span></div>; })}
+        <section className="mt-7 border-y border-border py-4" aria-label="Automation status">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div><p className="text-xs font-semibold text-foreground">Everything else is moving</p><p className="mt-1 text-[11px] text-muted-foreground">No operational exceptions need your attention.</p></div>
+            <div className="grid grid-cols-2 gap-x-5 gap-y-2 text-[11px] text-muted-foreground sm:flex sm:flex-wrap">
+              <span className="inline-flex items-center gap-1.5"><CalendarDays className="size-3.5 text-primary" />42 journeys</span>
+              <span className="inline-flex items-center gap-1.5"><FileCheck2 className="size-3.5 text-primary" />6 results filed</span>
+              <span className="inline-flex items-center gap-1.5"><MessageSquareText className="size-3.5 text-primary" />9 updates sent</span>
+              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-[#167681]" />0 safety risks</span>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><CalendarCheck2 className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Today’s session</p></div><p className="mt-3 font-mono text-2xl font-semibold">18</p><p className="mt-1 text-[10px] text-[#6d7c74]">15 ready · 2 intake · 1 coverage</p></div>
-              <div className="rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><ShieldCheck className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Admin coverage</p></div><p className="mt-3 font-mono text-2xl font-semibold">100%</p><p className="mt-1 text-[10px] text-[#6d7c74]">intake to payment, operated by Ambrosia</p></div>
-            </div>
-          </aside>
-        </div>
+          </div>
+        </section>
       </div>
 
-      <Sheet open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null); }}>
-        <SheetContent className="w-full overflow-y-auto border-l border-[#d9dfd8] bg-[#fffefa] p-0 sm:max-w-[520px]">
-          {selected ? <>
-            <SheetHeader className="border-b border-[#dce3db] p-6 text-left">
-              <div className="flex items-center gap-3"><PatientMark initials={selected.initials} size="lg" /><div><SheetTitle className="text-xl tracking-[-0.03em]">{selected.patient}</SheetTitle><SheetDescription>{selected.episode} · {selected.domain} decision</SheetDescription></div></div>
-            </SheetHeader>
-            <div className="space-y-6 p-6">
-              {resolved.has(selected.id) ? <ApprovalReceipt><p className="font-semibold">Decision approved and released.</p><p className="mt-1 text-xs">{selected.release} are now advancing.</p></ApprovalReceipt> : null}
-              <section><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#a65b06]">Why Ambrosia stopped</p><p className="mt-2 text-sm leading-6 text-[#45574e]">{selected.reason}</p></section>
-              <section className="rounded-xl border border-[#d8dfd8] bg-white p-4"><div className="flex items-center gap-2"><Sparkles className="size-4 text-[#286047]" /><h3 className="text-sm font-semibold">Recommended plan</h3></div><p className="mt-3 text-sm leading-6">{selected.recommendation}</p><div className="mt-4 flex items-center justify-between border-t border-[#e2e7e1] pt-3 text-[10px] text-[#697971]"><span>{selected.confidence}% confidence</span><button type="button" className="font-semibold text-[#245942]">View evidence & rationale</button></div></section>
-              <section><h3 className="text-sm font-semibold">Approval releases</h3><div className="mt-3 space-y-2">{selected.release.split(", ").map((action) => <div key={action} className="flex items-center gap-3 text-xs"><span className="flex size-5 items-center justify-center rounded-full border border-[#91ae9b] bg-[#f2f7f2]"><Check className="size-3 text-[#275e43]" /></span>{action}</div>)}</div></section>
-              <section className="rounded-lg border border-[#d9dfd8] bg-[#f5f7f2] p-4"><div className="flex items-center gap-2"><ShieldCheck className="size-4 text-[#285e45]" /><p className="text-xs font-semibold">Permission boundary</p></div><p className="mt-2 text-[11px] leading-5 text-[#63736a]">Ambrosia may prepare and coordinate. It cannot diagnose, prescribe, sign, or notify this patient of a clinical result without an authorized clinician.</p></section>
-              <div className="flex gap-2"><Button variant="outline" className="flex-1">Edit plan</Button><Button disabled={resolved.has(selected.id)} onClick={() => approve(selected)} className="flex-1 bg-[#c76c00] text-white hover:bg-[#a95c00]"><Stethoscope className="size-4" />{resolved.has(selected.id) ? "Approved" : "Approve & release"}</Button></div>
+      <Sheet open={editOpen} onOpenChange={setEditOpen}>
+        <SheetContent className="w-full overflow-y-auto border-l border-border bg-card p-0 sm:max-w-[520px]">
+          <SheetHeader className="border-b border-border p-6 text-left">
+            <SheetTitle>Edit recommendation</SheetTitle>
+            <SheetDescription>Adjust the clinical wording before approving the coordinated plan.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-5 p-6">
+            <label htmlFor="recommendation" className="text-xs font-semibold">Recommendation</label>
+            <Textarea id="recommendation" value={draft} onChange={(event) => setDraft(event.target.value)} className="min-h-32 rounded-md" />
+            <div className="border border-border bg-muted p-4 text-xs leading-5 text-muted-foreground">
+              Ambrosia will recalculate downstream patient, pathology, scheduling, and revenue steps after you save.
             </div>
-          </> : null}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1 rounded-md" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button className="flex-1 rounded-md" onClick={saveDraft} disabled={!draft.trim()}>Save recommendation</Button>
+            </div>
+          </div>
         </SheetContent>
       </Sheet>
-
-      <AgentDock />
-    </ScreenFrame>
+    </main>
   );
 }

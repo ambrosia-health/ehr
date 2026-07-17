@@ -1,31 +1,37 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { TodayScreen } from "@/components/platform/today-screen";
 
 describe("TodayScreen", () => {
-  it("opens on the dermatologist-only operating model", () => {
+  it("opens on one prioritized decision and a prepared day", () => {
     render(<TodayScreen />);
 
-    expect(screen.getByRole("heading", { name: "You practice medicine. Ambrosia runs the clinic.", level: 1 })).toBeVisible();
-    expect(screen.getByText("there is no administrative queue to manage.", { exact: false })).toBeVisible();
-    expect(screen.getByText("Admin coverage")).toBeVisible();
-    expect(screen.getByText("intake to payment, operated by Ambrosia")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Good morning, Maya.", level: 1 })).toBeVisible();
+    expect(screen.getByText("3 decisions · about 8 min")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "This lesion changed since her last visit." })).toBeVisible();
+    expect(screen.getByText("Everything else is moving")).toBeVisible();
   });
 
-  it("keeps the dermatologist focused on clinical judgment", async () => {
+  it("advances immediately to the next clinical decision after approval", async () => {
     const user = userEvent.setup();
     render(<TodayScreen />);
 
-    await user.click(screen.getByRole("button", { name: "Resolve 3 stops" }));
-    const review = screen.getByRole("dialog", { name: "Sarah Mitchell" });
+    await user.click(screen.getByRole("button", { name: "Approve plan" }));
 
-    await user.click(within(review).getByRole("button", { name: "Approve & release" }));
-    expect(within(review).getByText("Decision approved and released.")).toBeVisible();
-    await user.click(within(review).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Sarah Mitchell’s approved plan is moving");
+    expect(screen.getByText("2 decisions · about 6 min")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Jordan’s pathology needs a clinical disposition." })).toBeVisible();
+  });
 
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: "Needs your judgment · 2" })).toBeVisible();
+  it("reveals supporting evidence without leaving the decision", async () => {
+    const user = userEvent.setup();
+    render(<TodayScreen />);
+
+    await user.click(screen.getByRole("button", { name: "View evidence" }));
+
+    expect(screen.getByRole("region", { name: "Evidence summary" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
   });
 });

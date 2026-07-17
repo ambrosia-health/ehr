@@ -1,75 +1,177 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Filter, ListFilter, UsersRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, Search, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import { patientJourneys, stateTone } from "./platform-fixtures";
-import { AgentDock, CareRail, PatientMark, ScreenFrame, ScreenHeader, SearchField, SectionTitle, StatusPill } from "./platform-ui";
+import { patientJourneys, type PatientJourney } from "./platform-fixtures";
+import { ScreenFrame } from "./platform-ui";
 
-const savedViews = ["Active goals", "Unresolved pathology", "Interval change", "Biologic monitoring", "Patient overdue", "Surveillance due", "Recently closed"];
+type StatusFilter = "All" | "Needs clinician" | "Advancing" | "Waiting";
+
+const statusFilters: StatusFilter[] = ["All", "Needs clinician", "Advancing", "Waiting"];
+
+function matchesStatus(state: PatientJourney["state"], filter: StatusFilter) {
+  if (filter === "All") return true;
+  if (filter === "Waiting") return state.startsWith("Waiting");
+  return state === filter;
+}
+
+function statusClassName(state: PatientJourney["state"]) {
+  if (state === "Needs clinician") return "border-[#f2ce8f] bg-[#fff9ed] text-[#9a4d08]";
+  if (state === "Advancing") return "border-[#9ed8cf] bg-[#effaf7] text-[#0f6d65]";
+  if (state === "At risk") return "border-[#fecaca] bg-[#fff1f2] text-[#b42318]";
+  return "border-[#b8d2f4] bg-[#f2f7ff] text-[#245c9d]";
+}
+
+function PatientIdentity({ patient }: { patient: PatientJourney }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-[#cbd9eb] bg-[#eff5ff] text-[10px] font-semibold text-[#174f91]">
+        {patient.initials}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold text-[#172033]">{patient.name}</span>
+        <span className="mt-0.5 block truncate text-[10px] text-[#697386]">
+          {patient.age} y · {patient.pronouns} · {patient.mrn}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function PatientRowContent({ patient }: { patient: PatientJourney }) {
+  return (
+    <>
+      <PatientIdentity patient={patient} />
+      <div className="min-w-0">
+        <p className="truncate text-xs font-medium text-[#273247]">{patient.concern}</p>
+        <p className="mt-1 truncate text-[10px] text-[#6c7688]">{patient.goal}</p>
+      </div>
+      <div>
+        <span className={cn("inline-flex rounded-md border px-2 py-1 text-[10px] font-semibold", statusClassName(patient.state))}>
+          {patient.state}
+        </span>
+      </div>
+      <p className="text-[10px] leading-4 text-[#606b7d]">{patient.lastEvent}</p>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <p className="text-xs font-medium leading-4 text-[#202a3b]">{patient.next}</p>
+        {patient.id === "sarah-mitchell" ? <ArrowRight className="size-4 shrink-0 text-[#0b5fc6]" aria-hidden="true" /> : null}
+      </div>
+    </>
+  );
+}
 
 export function PatientsScreen() {
   const [query, setQuery] = useState("");
-  const [view, setView] = useState("Active goals");
-  const [expanded, setExpanded] = useState<string | null>("sarah-mitchell");
-  const filtered = useMemo(() => patientJourneys.filter((patient) => {
-    const matchesQuery = [patient.name, patient.mrn, patient.concern, patient.goal, patient.state].join(" ").toLowerCase().includes(query.toLowerCase());
-    if (!matchesQuery) return false;
-    if (view === "Unresolved pathology") return patient.id === "sarah-mitchell" || patient.id === "jordan-lee";
-    if (view === "Interval change") return patient.id === "sarah-mitchell";
-    if (view === "Biologic monitoring") return patient.id === "natalie-wong";
-    if (view === "Patient overdue") return patient.state === "Waiting patient";
-    if (view === "Recently closed") return patient.id === "benjamin-carter";
-    return true;
-  }), [query, view]);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return patientJourneys.filter((patient) => {
+      const matchesQuery = !normalizedQuery || [patient.name, patient.mrn, patient.concern, patient.goal, patient.state, patient.next]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+
+      return matchesQuery && matchesStatus(patient.state, statusFilter);
+    });
+  }, [query, statusFilter]);
 
   return (
-    <ScreenFrame>
-      <ScreenHeader title="Every patient has a horizon." description="312 durable care journeys, compressed by goal, current state, and the next meaningful step—not by chart activity." action={<Button variant="outline"><UsersRound className="size-4" />312 active patients</Button>} />
-      <div className="mx-auto max-w-[1480px] px-5 py-7 sm:px-8 lg:px-10">
-        <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
-          <aside>
-            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6c7b73]">Saved views</p>
-            <nav className="space-y-1" aria-label="Saved patient views">
-              {savedViews.map((item) => <button type="button" key={item} onClick={() => setView(item)} className={cn("flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-xs", view === item ? "bg-[#e5ede4] font-semibold text-[#1e513b]" : "text-[#596b61] hover:bg-[#f0f3ee]")}><span>{item}</span><span className="font-mono text-[9px] text-[#75847c]">{item === "Active goals" ? 312 : item === "Unresolved pathology" ? 37 : item === "Interval change" ? 11 : item === "Biologic monitoring" ? 24 : item === "Patient overdue" ? 12 : item === "Recently closed" ? 46 : 29}</span></button>)}
-            </nav>
-            <div className="mt-6 rounded-xl border border-[#d9dfd8] bg-white p-4"><div className="flex items-center gap-2"><ListFilter className="size-4 text-[#2b654b]" /><p className="text-xs font-semibold">Portfolio logic</p></div><p className="mt-2 text-[10px] leading-4 text-[#687870]">Administrative work can be managed as a policy-identical cohort. Clinical approvals always remain patient-specific.</p></div>
-          </aside>
+    <ScreenFrame className="bg-[#f8fafc] text-[#172033]">
+      <main className="mx-auto max-w-[1240px] px-4 py-6 sm:px-7 lg:px-10 lg:py-8">
+        <header className="flex flex-col gap-4 border-b border-[#d8dee8] pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#0b5fc6]">Clinical worklist</p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-[#101828]">Patients</h1>
+            <p className="mt-1.5 text-xs leading-5 text-[#667085]">Current state and next action across every active care journey.</p>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-[#475467]">
+            <UsersRound className="size-4 text-[#0b5fc6]" aria-hidden="true" />
+            <span className="font-semibold text-[#1d2939]">312</span> active journeys
+          </div>
+        </header>
 
-          <main className="min-w-0">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="w-full max-w-xl"><SearchField value={query} onChange={setQuery} placeholder="Search patient, MRN, lesion, diagnosis, result, or goal" /></div>
-              <Button variant="outline"><Filter className="size-4" />Stop reason · Any</Button>
+        <section className="mt-5 overflow-hidden rounded-lg border border-[#d8dee8] bg-white" aria-labelledby="patient-worklist-title">
+          <div className="flex flex-col gap-4 border-b border-[#d8dee8] px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-baseline gap-3">
+              <h2 id="patient-worklist-title" className="text-sm font-semibold text-[#1d2939]">Patient worklist</h2>
+              <p className="text-[10px] text-[#7b8495]">{filtered.length} of {patientJourneys.length} shown</p>
             </div>
-            <div className="mt-6"><SectionTitle title={view} description={`${filtered.length} representative journeys shown · 312 total`} /></div>
-
-            <div className="mt-4 overflow-hidden rounded-xl border border-[#d9dfd8] bg-white">
-              <div className="hidden grid-cols-[minmax(230px,1fr)_170px_minmax(180px,1fr)_minmax(180px,1fr)_150px_36px] gap-3 border-b border-[#dfe5df] bg-[#f5f7f3] px-4 py-3 text-[9px] font-semibold uppercase tracking-[0.12em] text-[#718078] lg:grid">
-                <span>Patient & goal</span><span>Current state</span><span>Last meaningful event</span><span>Next step</span><span>Owner</span><span />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter patients by status">
+                {statusFilters.map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    aria-pressed={statusFilter === filter}
+                    onClick={() => setStatusFilter(filter)}
+                    className={cn(
+                      "h-8 rounded-md border px-3 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b5fc6]/35",
+                      statusFilter === filter
+                        ? "border-[#0b5fc6] bg-[#eef5ff] text-[#084f9f]"
+                        : "border-[#d7dee8] bg-white text-[#596477] hover:border-[#9eb8da] hover:text-[#174f91]",
+                    )}
+                  >
+                    {filter}
+                  </button>
+                ))}
               </div>
-              {filtered.length ? filtered.map((patient) => {
-                const isExpanded = expanded === patient.id;
-                return <div key={patient.id} className="border-b border-[#e2e6e1] last:border-b-0">
-                  <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(230px,1fr)_170px_minmax(180px,1fr)_minmax(180px,1fr)_150px_36px] lg:items-center">
-                    <div className="flex items-start gap-3"><PatientMark initials={patient.initials} /><div className="min-w-0"><Link href={patient.id === "sarah-mitchell" ? "/patients/sarah-mitchell" : "#"} className="text-xs font-semibold hover:underline">{patient.name}</Link><p className="mt-1 text-[10px] text-[#718078]">{patient.age} y · {patient.pronouns} · {patient.mrn}</p><p className="mt-2 text-[10px] leading-4 text-[#385447]">{patient.goal}</p></div></div>
-                    <div><StatusPill status={stateTone[patient.state]}>{patient.state}</StatusPill><p className="mt-1 text-[9px] text-[#7b8881]">{patient.horizon}</p></div>
-                    <p className="text-[10px] leading-4 text-[#5f7067]">{patient.lastEvent}</p>
-                    <p className="text-xs font-semibold leading-4 text-[#284d3b]">{patient.next}</p>
-                    <p className="text-[10px] text-[#5f7067]">{patient.owner}</p>
-                    <button type="button" onClick={() => setExpanded(isExpanded ? null : patient.id)} className="flex size-8 items-center justify-center rounded-md hover:bg-[#edf1eb]" aria-label={`${isExpanded ? "Collapse" : "Expand"} ${patient.name} care horizon`}>{isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</button>
-                  </div>
-                  {isExpanded ? <div className="border-t border-[#e4e8e3] bg-[#fbfcf9] px-4 py-5"><div className="overflow-x-auto"><CareRail steps={patient.steps} /></div>{patient.id === "sarah-mitchell" ? <div className="mt-4 flex justify-end"><Button asChild size="sm" className="bg-[#1d563e] text-white hover:bg-[#164630]"><Link href="/patients/sarah-mitchell">Open Sarah’s care agent <ChevronRight className="size-3.5" /></Link></Button></div> : null}</div> : null}
-                </div>;
-              }) : <div className="px-6 py-16 text-center"><p className="text-sm font-semibold">No journeys match this view.</p><p className="mt-2 text-xs text-[#6b7a72]">Try another saved view or clear your search.</p></div>}
+              <div className="relative w-full sm:w-[300px]">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#7b8495]" aria-hidden="true" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search name, MRN, or concern"
+                  aria-label="Search patients"
+                  className="h-9 rounded-md border-[#cfd7e3] bg-white pl-9 text-xs shadow-none focus-visible:border-[#0b5fc6] focus-visible:ring-[#0b5fc6]/20"
+                />
+              </div>
             </div>
-          </main>
-        </div>
-      </div>
-      <AgentDock />
+          </div>
+
+          <div className="hidden grid-cols-[1.15fr_1fr_150px_1fr_1fr] gap-4 border-b border-[#d8dee8] bg-[#f8fafc] px-4 py-2.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-[#667085] md:grid" aria-hidden="true">
+            <span>Patient</span>
+            <span>Concern</span>
+            <span>Status</span>
+            <span>Last activity</span>
+            <span>Next action</span>
+          </div>
+
+          <div className="divide-y divide-[#e1e6ee]">
+            {filtered.map((patient) => {
+              const className = "grid gap-3 px-4 py-3.5 transition-colors md:grid-cols-[1.15fr_1fr_150px_1fr_1fr] md:items-center md:gap-4";
+
+              return patient.id === "sarah-mitchell" ? (
+                <Link
+                  key={patient.id}
+                  href="/patients/sarah-mitchell"
+                  aria-label={`Open ${patient.name}`}
+                  className={cn(className, "hover:bg-[#f5f9ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0b5fc6]")}
+                >
+                  <PatientRowContent patient={patient} />
+                </Link>
+              ) : (
+                <article key={patient.id} className={className}>
+                  <PatientRowContent patient={patient} />
+                </article>
+              );
+            })}
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="border-t border-[#e1e6ee] px-4 py-12 text-center">
+              <CheckCircle2 className="mx-auto size-6 text-[#0b5fc6]" aria-hidden="true" />
+              <p className="mt-3 text-sm font-semibold text-[#273247]">No patient matches this view.</p>
+              <p className="mt-1 text-xs text-[#697386]">Adjust the status filter or try another search.</p>
+            </div>
+          ) : null}
+        </section>
+      </main>
     </ScreenFrame>
   );
 }
