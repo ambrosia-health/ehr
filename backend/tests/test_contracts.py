@@ -13,7 +13,19 @@ from app.cli import verify
 from app.config import Settings
 from app.database import Base, SessionLocal, engine
 from app.main import clear_session_cookie
-from app.models import Membership, Organization, Patient, Role, User
+from app.models import (
+    DatasetRelease,
+    DomainEvent,
+    EpisodeDefinition,
+    EpisodeEventLink,
+    EpisodeInstance,
+    Membership,
+    Organization,
+    Patient,
+    Role,
+    SimulationScenario,
+    User,
+)
 from app.seed import canonical_ids, seed_database
 
 
@@ -38,6 +50,91 @@ async def test_seed_is_idempotent_for_every_table_and_verify_is_executable() -> 
     assert before["patients"] == 41
     assert before["appointments"] == 42
     assert before["encounters"] == 37
+    await verify()
+
+
+async def test_existing_demo_seed_backfills_missing_learning_graph_idempotently() -> None:
+    if engine.dialect.name != "sqlite":
+        pytest.skip("PostgreSQL evidence guards intentionally reject fixture deletion")
+
+    ids = canonical_ids()
+    event_ids = [
+        seed_module.sid(f"domain-event:sarah:{event_type}")
+        for event_type in (
+            "appointment.booked",
+            "intake.completed",
+            "encounter.started",
+        )
+    ]
+    async with SessionLocal() as session:
+        await session.execute(
+            delete(EpisodeEventLink).where(
+                EpisodeEventLink.episode_instance_id == ids["learning_episode_id"]
+            )
+        )
+        await session.execute(
+            delete(EpisodeInstance).where(
+                EpisodeInstance.id == ids["learning_episode_id"]
+            )
+        )
+        await session.execute(delete(DomainEvent).where(DomainEvent.id.in_(event_ids)))
+        await session.execute(
+            delete(SimulationScenario).where(
+                SimulationScenario.id == ids["learning_scenario_id"]
+            )
+        )
+        await session.execute(
+            delete(DatasetRelease).where(
+                DatasetRelease.id == ids["learning_dataset_release_id"]
+            )
+        )
+        await session.execute(
+            delete(EpisodeDefinition).where(
+                EpisodeDefinition.id == ids["learning_episode_definition_id"]
+            )
+        )
+        await session.commit()
+
+        await seed_database(session)
+        async def learning_counts() -> dict[str, int]:
+            queries = {
+                "definitions": select(func.count(EpisodeDefinition.id)).where(
+                    EpisodeDefinition.id == ids["learning_episode_definition_id"]
+                ),
+                "scenarios": select(func.count(SimulationScenario.id)).where(
+                    SimulationScenario.id == ids["learning_scenario_id"]
+                ),
+                "episodes": select(func.count(EpisodeInstance.id)).where(
+                    EpisodeInstance.id == ids["learning_episode_id"]
+                ),
+                "events": select(func.count(DomainEvent.id)).where(
+                    DomainEvent.id.in_(event_ids)
+                ),
+                "links": select(func.count(EpisodeEventLink.id)).where(
+                    EpisodeEventLink.episode_instance_id == ids["learning_episode_id"]
+                ),
+                "datasets": select(func.count(DatasetRelease.id)).where(
+                    DatasetRelease.id == ids["learning_dataset_release_id"]
+                ),
+            }
+            return {
+                name: int(await session.scalar(query) or 0)
+                for name, query in queries.items()
+            }
+
+        first_counts = await learning_counts()
+        await seed_database(session)
+        second_counts = await learning_counts()
+
+    assert first_counts == {
+        "definitions": 1,
+        "scenarios": 1,
+        "episodes": 1,
+        "events": 3,
+        "links": 3,
+        "datasets": 1,
+    }
+    assert second_counts == first_counts
     await verify()
 
 

@@ -49,6 +49,15 @@ EXPECTED_ENDPOINTS = {
     ("POST", "/api/demo/advance-time"),
     ("POST", "/api/demo/triggers/pathology"),
     ("POST", "/api/demo/triggers/claim-response"),
+    ("GET", "/api/demo/learning/episodes"),
+    ("GET", "/api/demo/learning/console"),
+    ("GET", "/api/demo/learning/episodes/{episode_id}/trajectory"),
+    ("POST", "/api/demo/learning/environment-runs"),
+    ("GET", "/api/demo/learning/environment-runs/{run_id}"),
+    ("GET", "/api/demo/learning/environment-runs/{run_id}/history"),
+    ("POST", "/api/demo/learning/environment-runs/{run_id}/steps"),
+    ("POST", "/api/demo/learning/environment-runs/{run_id}/model-step"),
+    ("GET", "/api/demo/learning/dataset-manifests"),
 }
 
 PUBLIC_ENDPOINTS = {
@@ -75,6 +84,8 @@ def _concrete_path(path: str) -> str:
         "{conversation_id}": ids["sarah_conversation_id"],
         "{claim_id}": ids["sarah_claim_id"],
         "{capability}": "chart_summary",
+        "{episode_id}": ids["learning_episode_id"],
+        "{run_id}": uuid.uuid4(),
     }
     for marker, value in replacements.items():
         path = path.replace(marker, str(value))
@@ -540,6 +551,18 @@ async def test_presenter_routes_reject_every_ordinary_persona(client) -> None:
         ("POST", "/api/demo/advance-time"),
         ("POST", "/api/demo/triggers/pathology"),
         ("POST", "/api/demo/triggers/claim-response"),
+        ("GET", "/api/demo/learning/episodes"),
+        ("GET", "/api/demo/learning/console"),
+        (
+            "GET",
+            f"/api/demo/learning/episodes/{canonical_ids()['learning_episode_id']}/trajectory",
+        ),
+        ("POST", "/api/demo/learning/environment-runs"),
+        ("GET", f"/api/demo/learning/environment-runs/{uuid.uuid4()}"),
+        ("GET", f"/api/demo/learning/environment-runs/{uuid.uuid4()}/history"),
+        ("POST", f"/api/demo/learning/environment-runs/{uuid.uuid4()}/steps"),
+        ("POST", f"/api/demo/learning/environment-runs/{uuid.uuid4()}/model-step"),
+        ("GET", "/api/demo/learning/dataset-manifests"),
     ]
     failures = []
     for method, path in paths:

@@ -6,7 +6,7 @@ Ambrosia instruments both runtime boundaries without requiring contributors or a
 
 - Vercel Web Analytics records route usage, while Speed Insights records route-attributed LCP, INP, CLS, FCP, and TTFB from real browsers.
 - Next.js client instrumentation marks every initial load and router transition with `ambrosia.route-start`, `ambrosia.route-ready`, and `ambrosia.route-transition` User Timing entries.
-- The API client records every same-origin request as `ambrosia.api`, including normalized route, method, outcome, duration, correlation ID, and the backend `Server-Timing` value. Dynamic identifiers are replaced with `:id` before aggregation.
+- The API client records every same-origin request as `ambrosia.api`, including normalized route, method, outcome, duration, correlation ID, and the backend `Server-Timing` value. Dynamic identifiers are replaced with `:id` before aggregation. Caller-cancelled requests remain measurable as `cancelled` but do not emit false network-failure warnings.
 - Slow route transitions, poor Core Web Vitals, failed API requests, and API requests over one second emit structured browser warnings. These warnings contain no request bodies, patient identifiers, or response data.
 
 Use the Vercel project dashboards at `/analytics`, `/speed-insights`, and `/logs`. Future agents should rank route-level p75 Core Web Vitals before changing rendering, caching, images, or client boundaries.
@@ -34,6 +34,8 @@ Stop the log capture after the representative journey completes. The report rank
 ## Regression gates
 
 - `backend/tests/test_observability.py` requires correlation and timing headers, structured privacy-safe route logs, and a bootstrap ceiling of 150 SQL statements and one second against the local test database.
+- `backend/tests/test_learning_environment.py` fixes local SQL ceilings for the synthetic learning plane: 5 for episode or dataset catalogs, 15 for run creation, 7 for a current-run read, and 25 for an atomic step. The step budget includes one write for its immutable idempotency receipt, which prevents a late retry from being reconstructed against newer run state. Detail responses remain bounded to the latest step rather than growing with history.
+- `backend/tests/test_learning_console_reads.py` caps the internal console read models at 8 statements for bootstrap, 7 for a trajectory page, and 10 for a run-history page. API coverage allows 20, 16, and 60 statements respectively for the composed console feed, history response, and first model-driven step; an idempotent retry uses the stored action/run provenance and does not invoke the model again.
 - `apps/web/e2e/api-contract.spec.ts` requires timing headers through the real Next.js rewrite and caps bootstrap server duration at five seconds in local and hosted E2E.
 - Web lint, typecheck, component tests, production build, browser product/API contracts, Modal model/database attestation, and the performance contract run on every relevant `main` deployment.
 
@@ -44,5 +46,9 @@ Stop the log capture after the representative journey completes. The report rank
 3. Use database share and query count to distinguish query/region problems from Python serialization or external API latency.
 4. Make one bounded change, rerun the regression gates, deploy, then compare the same p75/p95 window.
 5. Keep public contracts and human safety gates intact. Performance work must not add stale clinical state, weaken tenant filters, or cache authenticated responses across users.
+
+Transactional learning capture reuses resources already loaded by the mutating use case, stores hashes/references instead of rebuilding charts, and performs fixed per-decision inserts. It must not add a query per offered action, episode event, reward dimension, or historical step. Dataset materialization and event delivery must run asynchronously from durable checkpoints; request paths never scan or export a training corpus.
+
+The July 2026 local SQLite capture benchmark measured 63 statements for composite intake, 87 for encounter completion, 44 for pathology arrival, 38 for pathology review, and 42 for denial correction/resubmission. The corresponding regression ceilings are 65, 90, 48, 42, and 46 statements. An earlier capture-disabled baseline measured 45 statements for intake and 27 for denial correction/resubmission. Hosted p95 and database share remain the deployment authority.
 
 Modal API and workflow containers are pinned to `us-east`, colocated with the Neon `aws-us-east-1` project. They remain scale-to-zero with no warm-container or GPU requirement.

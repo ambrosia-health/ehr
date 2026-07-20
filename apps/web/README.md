@@ -1,6 +1,6 @@
 # Ambrosia web
 
-Next.js 16 frontend for the dermatologist operating workspace. The canonical product is intentionally small: `/` is Today, `/patients` is the patient worklist, `/patients/sarah-mitchell` is the focused clinical decision brief, and `/practice` is the quiet proof that administrative work is moving. There is no browser login, persona switcher, patient portal, presenter console, or compatibility route.
+Next.js 16 frontend for the dermatologist operating workspace. The canonical product is intentionally small: `/` is Today, `/patients` is the patient worklist, `/patients/sarah-mitchell` is the focused clinical decision brief, and `/practice` is the quiet proof that administrative work is moving. There is no clinician-facing browser login, persona switcher, patient portal, or compatibility route. `/internal/learning` is a deliberately separate presenter-gated synthetic evaluation console and never appears in clinician navigation.
 
 The product views currently use explicit synthetic fixtures in `src/components/platform`. Backend domain workflows remain available through the same-origin `/api/*` rewrite. New browser HTTP traffic must use `src/lib/api/client.ts` so request timing, correlation IDs, and `Server-Timing` stay observable.
 

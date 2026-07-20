@@ -11,6 +11,7 @@ const OPAQUE_SEGMENT = /^(?:clm|den|enc|msg|pat|task)-[a-z0-9-]{4,}$/i;
 
 export type ApiPerformanceOutcome =
   | "success"
+  | "cancelled"
   | "http_error"
   | "network_error"
   | "timeout"
@@ -95,7 +96,7 @@ export function reportApiPerformance(input: ReportApiPerformanceInput): ApiPerfo
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent<ApiPerformanceDetail>(API_PERFORMANCE_EVENT, { detail }));
   }
-  if (detail.durationMs >= SLOW_API_MS || detail.outcome !== "success") {
+  if (detail.durationMs >= SLOW_API_MS || !["success", "cancelled"].includes(detail.outcome)) {
     console.warn(JSON.stringify({ event: "client_api_request", ...detail }));
   }
   return detail;

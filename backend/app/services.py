@@ -17,6 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .ai import run_ai
 from .clock import domain_now
 from .config import get_settings
+from .learning import (
+    ensure_patient_episode,
+    hash_json,
+    record_decision_trajectory,
+    record_domain_event,
+    record_outcome,
+)
 from .models import (
     AIOutput,
     AIRun,
@@ -38,9 +45,12 @@ from .models import (
     DemoTimelineEvent,
     Denial,
     DiagnosticResult,
+    DomainEvent,
     EligibilityCheck,
     Encounter,
     EncounterNote,
+    EpisodeEventLink,
+    EpisodeInstance,
     Estimate,
     FileRecord,
     Lesion,
@@ -98,6 +108,91 @@ def row_dict(model: Any, *, exclude: set[str] | None = None) -> dict[str, Any]:
 
 def _percent(numerator: int | float | Decimal, denominator: int | float | Decimal) -> float:
     return round(float(numerator) / float(denominator) * 100, 1) if denominator else 0.0
+
+
+def _resource_time(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=value.tzinfo or UTC).isoformat()
+
+
+def _observation_resource(
+    *,
+    resource_type: str,
+    resource_id: uuid.UUID,
+    content_hash: str,
+    resource_version: int = 1,
+    effective_at: datetime | None = None,
+    recorded_at: datetime | None = None,
+) -> dict[str, Any]:
+    return {
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "resource_version": resource_version,
+        "content_hash": content_hash,
+        "effective_at": _resource_time(effective_at),
+        "recorded_at": _resource_time(recorded_at),
+    }
+
+
+async def _patient_learning_episode(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    patient_id: uuid.UUID,
+    started_at: datetime,
+) -> EpisodeInstance | None:
+    episode_key = f"patient-journey:{patient_id}"
+    episode = await session.scalar(
+        select(EpisodeInstance).where(
+            EpisodeInstance.organization_id == organization_id,
+            EpisodeInstance.episode_key == episode_key,
+        )
+    )
+    if episode is not None:
+        return episode
+    return await ensure_patient_episode(
+        session,
+        organization_id=organization_id,
+        patient_id=patient_id,
+        started_at=started_at,
+    )
+
+
+async def _link_episode_event(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    episode: EpisodeInstance,
+    event: DomainEvent,
+    role: str,
+) -> EpisodeEventLink:
+    link_id = uuid.uuid5(episode.id, f"event-link:{event.id}")
+    existing = await session.scalar(
+        select(EpisodeEventLink).where(
+            EpisodeEventLink.organization_id == organization_id,
+            EpisodeEventLink.id == link_id,
+            EpisodeEventLink.episode_instance_id == episode.id,
+        )
+    )
+    if existing is not None:
+        return existing
+    current_sequence = await session.scalar(
+        select(func.coalesce(func.max(EpisodeEventLink.sequence), 0)).where(
+            EpisodeEventLink.organization_id == organization_id,
+            EpisodeEventLink.episode_instance_id == episode.id,
+        )
+    )
+    link = EpisodeEventLink(
+        id=link_id,
+        organization_id=organization_id,
+        episode_instance_id=episode.id,
+        domain_event_id=event.id,
+        sequence=int(current_sequence or 0) + 1,
+        role=role,
+    )
+    session.add(link)
+    return link
 
 
 async def ai_provenance(
@@ -1209,20 +1304,26 @@ async def complete_encounter_review(
             detail="The note changed in another tab; reload before signing",
         )
     signed_at = await domain_now(session, organization_id)
-    actions_query = select(ProposedAction).where(
-        ProposedAction.organization_id == organization_id,
-        ProposedAction.patient_id == encounter.patient_id,
-        ProposedAction.status == "proposed",
-        or_(ProposedAction.entity_id == encounter.id, ProposedAction.entity_id == note.id),
-    )
-    if selected_action_ids:
-        actions_query = actions_query.where(ProposedAction.id.in_(selected_action_ids))
-    actions = (await session.scalars(actions_query)).all()
-    if selected_action_ids and {action.id for action in actions} != set(selected_action_ids):
+    offered_actions = (
+        await session.scalars(
+            select(ProposedAction)
+            .where(
+                ProposedAction.organization_id == organization_id,
+                ProposedAction.patient_id == encounter.patient_id,
+                ProposedAction.status == "proposed",
+                or_(ProposedAction.entity_id == encounter.id, ProposedAction.entity_id == note.id),
+            )
+            .order_by(ProposedAction.created_at, ProposedAction.id)
+        )
+    ).all()
+    offered_by_id = {action.id: action for action in offered_actions}
+    selected_ids = set(selected_action_ids or offered_by_id)
+    if selected_action_ids and selected_ids != selected_ids.intersection(offered_by_id):
         raise HTTPException(
             status_code=422,
             detail="Every selected action must belong to this encounter and await approval",
         )
+    actions = [action for action in offered_actions if action.id in selected_ids]
     required = {
         "sign_note",
         "confirm_biopsy_consent",
@@ -1303,6 +1404,131 @@ async def complete_encounter_review(
             status_code=409,
             detail="A signed, active, versioned shave-biopsy consent linked to this encounter is required",
         )
+    proposal_payload_hashes: dict[uuid.UUID, str] = {}
+    observation_resources = [
+        _observation_resource(
+            resource_type="encounter",
+            resource_id=encounter.id,
+            content_hash=hash_json(
+                {
+                    "appointmentId": str(encounter.appointment_id),
+                    "patientId": str(encounter.patient_id),
+                    "providerId": str(encounter.provider_id),
+                    "status": encounter.status,
+                    "startedAt": encounter.started_at,
+                    "chiefComplaintHash": hashlib.sha256(
+                        encounter.chief_complaint.encode()
+                    ).hexdigest(),
+                    "ambientTranscriptHash": (
+                        hashlib.sha256(encounter.ambient_transcript.encode()).hexdigest()
+                        if encounter.ambient_transcript
+                        else None
+                    ),
+                }
+            ),
+            effective_at=encounter.started_at,
+            recorded_at=encounter.updated_at,
+        ),
+        _observation_resource(
+            resource_type="note_version",
+            resource_id=current_note_version.id,
+            resource_version=current_note_version.version_number,
+            content_hash=current_note_version.content_hash,
+            effective_at=current_note_version.created_at,
+            recorded_at=current_note_version.created_at,
+        ),
+        _observation_resource(
+            resource_type="consent",
+            resource_id=consent.id,
+            content_hash=hash_json(
+                {
+                    "encounterId": str(consent.encounter_id),
+                    "consentType": consent.consent_type,
+                    "documentVersion": consent.version,
+                    "acceptedAt": consent.accepted_at,
+                    "revokedAt": consent.revoked_at,
+                    "signatureHash": hashlib.sha256(consent.signature_text.encode()).hexdigest(),
+                }
+            ),
+            effective_at=consent.accepted_at,
+            recorded_at=consent.updated_at,
+        ),
+        _observation_resource(
+            resource_type="lesion",
+            resource_id=lesion.id,
+            content_hash=hash_json(
+                {
+                    "patientId": str(lesion.patient_id),
+                    "status": lesion.status,
+                    "anatomicalLocationHash": hashlib.sha256(
+                        lesion.anatomical_location.encode()
+                    ).hexdigest(),
+                }
+            ),
+            recorded_at=lesion.updated_at,
+        ),
+        _observation_resource(
+            resource_type="message_draft",
+            resource_id=aftercare_draft.id,
+            content_hash=hash_json(
+                {
+                    "conversationId": str(aftercare_draft.conversation_id),
+                    "status": aftercare_draft.status,
+                    "bodyHash": hashlib.sha256(aftercare_draft.body.encode()).hexdigest(),
+                    "aiRunId": str(aftercare_draft.ai_run_id)
+                    if aftercare_draft.ai_run_id
+                    else None,
+                }
+            ),
+            recorded_at=aftercare_draft.updated_at,
+        ),
+    ]
+    for action in offered_actions:
+        payload_hash = action.payload_hash or hash_json(action.payload_json)
+        proposal_payload_hashes[action.id] = payload_hash
+        action.payload_hash = payload_hash
+        observation_resources.append(
+            _observation_resource(
+                resource_type="proposed_action",
+                resource_id=action.id,
+                resource_version=action.proposal_version,
+                content_hash=hash_json(
+                    {
+                        "actionType": action.action_type,
+                        "entityType": action.entity_type,
+                        "entityId": str(action.entity_id) if action.entity_id else None,
+                        "payloadHash": payload_hash,
+                        "rationaleHash": hashlib.sha256(action.rationale.encode()).hexdigest(),
+                        "status": action.status,
+                        "requiresApproval": action.requires_approval,
+                        "aiRunId": str(action.ai_run_id) if action.ai_run_id else None,
+                        "expectedTargetVersion": action.expected_target_version,
+                    }
+                ),
+                recorded_at=action.updated_at,
+            )
+        )
+    selected_action_refs = [
+        {
+            "id": str(action.id),
+            "type": action.action_type,
+            "version": action.proposal_version,
+            "payloadHash": proposal_payload_hashes[action.id],
+        }
+        for action in actions
+    ]
+    rejected_action_ids = sorted(
+        str(action.id) for action in offered_actions if action.id not in selected_ids
+    )
+    selection_hash = hash_json(
+        {
+            "noteHash": expected_note_hash,
+            "selectedActionIds": sorted(str(action.id) for action in actions),
+        }
+    )
+    trajectory_idempotency_key = (
+        f"encounter-review:{encounter.id}:{expected_note_version}:{selection_hash[:32]}"
+    )
     signature_payload = "|".join(
         [
             str(note.id),
@@ -1327,6 +1553,13 @@ async def complete_encounter_review(
                 decision="approved",
                 comment=attestation,
                 decided_at=signed_at,
+                proposed_action_version=action.proposal_version,
+                expected_target_version=(
+                    action.expected_target_version
+                    or (expected_note_version if action.action_type == "sign_note" else None)
+                ),
+                reviewer_role="provider",
+                edit_diff_json={},
             )
         )
 
@@ -1576,17 +1809,11 @@ async def complete_encounter_review(
             "messageId": str(aftercare.id),
             "taskId": str(pathology_task.id),
         }
-        next_sequence = (
-            int(
-                await session.scalar(
-                    select(func.coalesce(func.max(WorkflowEvent.sequence), 0)).where(
-                        WorkflowEvent.workflow_run_id == workflow.id
-                    )
-                )
-                or 0
-            )
-            + 1
-        )
+        # Canonical runs already contain the proposals-ready event at sequence 1.
+        # The max keeps pre-counter seeded runs safe while normal writes consume
+        # the optimistic counter without a sequence scan.
+        next_sequence = max(int(workflow.next_event_sequence), 2)
+        workflow.next_event_sequence = next_sequence + 1
         session.add(
             WorkflowEvent(
                 organization_id=organization_id,
@@ -1643,6 +1870,110 @@ async def complete_encounter_review(
             ),
         ]
     )
+    episode = await _patient_learning_episode(
+        session,
+        organization_id=organization_id,
+        patient_id=encounter.patient_id,
+        started_at=encounter.started_at or signed_at,
+    )
+    review_event_payload = {
+        "status": encounter.status,
+        "noteRef": {
+            "id": str(note.id),
+            "version": expected_note_version,
+            "contentHash": expected_note_hash,
+            "signatureHash": note.signature_hash,
+        },
+        "selectedActions": selected_action_refs,
+        "rejectedActionIds": rejected_action_ids,
+        "resultRefs": {
+            "consentId": str(consent.id),
+            "procedureId": str(procedure.id),
+            "orderId": str(order.id),
+            "specimenId": str(specimen.id),
+            "claimId": str(claim.id),
+            "messageId": str(aftercare.id),
+            "pathologyTaskId": str(pathology_task.id),
+            "workflowId": str(workflow.id) if workflow else None,
+        },
+    }
+    if episode is not None:
+        event, decision, action_attempt = await record_decision_trajectory(
+            session,
+            organization_id=organization_id,
+            episode=episode,
+            decision_type="encounter_review",
+            available_actions=sorted({action.action_type for action in offered_actions}),
+            selected_action="complete_encounter_review",
+            observation_resources=observation_resources,
+            actor_kind="human",
+            actor_user_id=reviewer_user_id,
+            actor_role="provider",
+            occurred_at=signed_at,
+            aggregate_type="encounter",
+            aggregate_id=encounter.id,
+            aggregate_sequence=2,
+            event_type="encounter.review_completed",
+            event_payload=review_event_payload,
+            idempotency_key=trajectory_idempotency_key,
+            patient_id=encounter.patient_id,
+            action_arguments={
+                "selectedActions": selected_action_refs,
+                "rejectedActionIds": rejected_action_ids,
+                "attestationHash": hashlib.sha256(attestation.encode()).hexdigest(),
+            },
+            expected_target_type="encounter_note",
+            expected_target_id=note.id,
+            expected_target_version=expected_note_version,
+        )
+        # Persist the manifest and decision before the action. The learning
+        # tables use composite tenant foreign keys without ORM relationships,
+        # so an explicit dependency flush keeps SQLite and Postgres ordering
+        # identical while retaining one transaction.
+        session.expunge(action_attempt)
+        await session.flush()
+        session.add(action_attempt)
+        await session.flush()
+        await record_outcome(
+            session,
+            organization_id=organization_id,
+            episode=episode,
+            outcome_type="encounter.review_execution",
+            value={
+                "status": encounter.status,
+                "noteSigned": note.status == "signed",
+                "consentVerified": True,
+                "procedureRecorded": procedure.status == "completed",
+                "pathologyOrderCreated": order.status == "ordered",
+                "specimenTracked": specimen.status == "in_transit",
+                "aftercareSent": aftercare.status == "sent",
+                "pathologyTrackingTaskOpen": pathology_task.status == "open",
+                "claimStatus": claim.status,
+            },
+            provenance_kind="observed",
+            observed_at=signed_at,
+            decision=decision,
+            action=action_attempt,
+            source_event=event,
+        )
+    else:
+        await record_domain_event(
+            session,
+            organization_id=organization_id,
+            event_type="encounter.review_completed",
+            aggregate_type="encounter",
+            aggregate_id=encounter.id,
+            aggregate_sequence=2,
+            patient_id=encounter.patient_id,
+            actor_kind="human",
+            actor_user_id=reviewer_user_id,
+            actor_role="provider",
+            occurred_at=signed_at,
+            effective_at=signed_at,
+            payload=review_event_payload,
+            idempotency_key=trajectory_idempotency_key,
+            sensitivity="restricted",
+        )
     await set_demo_chapter(session, organization_id, "review_complete")
     await session.flush()
     return await get_encounter_bundle(session, organization_id, encounter.id)
@@ -1709,6 +2040,57 @@ async def trigger_sarah_pathology(
     )
     if existing:
         return existing
+    source_refs = {
+        "procedure": {
+            "id": str(procedure.id),
+            "version": 1,
+            "contentHash": hash_json(
+                {
+                    "encounterId": str(procedure.encounter_id),
+                    "patientId": str(procedure.patient_id),
+                    "lesionId": str(procedure.lesion_id) if procedure.lesion_id else None,
+                    "code": procedure.code,
+                    "performedAt": procedure.performed_at,
+                    "status": procedure.status,
+                    "documentationHash": hashlib.sha256(
+                        procedure.documentation.encode()
+                    ).hexdigest(),
+                }
+            ),
+        },
+        "order": {
+            "id": str(order.id),
+            "version": 1,
+            "contentHash": hash_json(
+                {
+                    "encounterId": str(order.encounter_id),
+                    "patientId": str(order.patient_id),
+                    "lesionId": str(order.lesion_id) if order.lesion_id else None,
+                    "orderType": order.order_type,
+                    "code": order.code,
+                    "status": order.status,
+                    "orderedAt": order.ordered_at,
+                }
+            ),
+        },
+        "specimen": {
+            "id": str(specimen.id),
+            "version": 1,
+            "contentHash": hash_json(
+                {
+                    "orderId": str(specimen.order_id),
+                    "procedureId": str(specimen.procedure_id),
+                    "patientId": str(specimen.patient_id),
+                    "lesionId": str(specimen.lesion_id),
+                    "accessionNumberHash": hashlib.sha256(
+                        specimen.accession_number.encode()
+                    ).hexdigest(),
+                    "collectedAt": specimen.collected_at,
+                    "status": specimen.status,
+                }
+            ),
+        },
+    }
     scenario = await get_demo_scenario(session, organization_id)
     scenario_time = scenario.current_time.replace(tzinfo=scenario.current_time.tzinfo or UTC)
     result_time = max(scenario_time, DEMO_NOW + timedelta(days=3))
@@ -1831,6 +2213,84 @@ async def trigger_sarah_pathology(
             ),
         ]
     )
+    episode = await _patient_learning_episode(
+        session,
+        organization_id=organization_id,
+        patient_id=encounter.patient_id,
+        started_at=encounter.started_at or result_time,
+    )
+    result_content_hash = hash_json(
+        {
+            "orderId": str(result.order_id),
+            "specimenId": str(result.specimen_id),
+            "patientId": str(result.patient_id),
+            "lesionId": str(result.lesion_id),
+            "procedureId": str(result.procedure_id),
+            "resultType": result.result_type,
+            "status": result.status,
+            "diagnosisHash": hashlib.sha256(result.diagnosis.encode()).hexdigest(),
+            "narrativeHash": hashlib.sha256(result.narrative.encode()).hexdigest(),
+            "summaryHash": hashlib.sha256(result.summary.encode()).hexdigest(),
+            "resultedAt": result.resulted_at,
+        }
+    )
+    event = await record_domain_event(
+        session,
+        organization_id=organization_id,
+        event_type="pathology.result_received",
+        aggregate_type="diagnostic_result",
+        aggregate_id=result.id,
+        aggregate_sequence=1,
+        patient_id=encounter.patient_id,
+        actor_kind="external_system",
+        actor_user_id=actor_user_id,
+        actor_role="presenter",
+        occurred_at=result_time,
+        effective_at=result_time,
+        correlation_id=str(episode.id) if episode else None,
+        payload={
+            "status": result.status,
+            "resultContentHash": result_content_hash,
+            "sourceRefs": source_refs,
+            "resultRefs": {
+                "aiRunId": str(run.id),
+                "aiSummaryHash": hash_json(summary.model_dump(mode="json", by_alias=True)),
+                "reviewTaskId": str(task.id),
+                "messageDraftId": str(draft.id),
+                "messageDraftBodyHash": hashlib.sha256(draft.body.encode()).hexdigest(),
+            },
+            "humanReviewRequired": True,
+            "provider": "simulated_pathology",
+        },
+        idempotency_key=f"pathology-result:{result.id}:received:v1",
+        sensitivity="restricted",
+    )
+    if episode is not None:
+        await _link_episode_event(
+            session,
+            organization_id=organization_id,
+            episode=episode,
+            event=event,
+            role="outcome",
+        )
+        await record_outcome(
+            session,
+            organization_id=organization_id,
+            episode=episode,
+            outcome_type="pathology.result_available",
+            value={
+                "resultStatus": result.status,
+                "orderStatus": order.status,
+                "specimenStatus": specimen.status,
+                "reviewTaskStatus": task.status,
+                "messageDraftStatus": draft.status,
+                "humanReviewRequired": True,
+            },
+            provenance_kind="simulated",
+            observed_at=result_time,
+            source_event=event,
+            simulator_version="simulated-pathology-2026.1",
+        )
     await session.flush()
     return result
 

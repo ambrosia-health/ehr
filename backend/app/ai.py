@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .clock import domain_now
 from .config import get_settings
+from .learning import hash_json, record_domain_event
 from .models import AIInput, AIOutput, AIRun, DemoScenario, PromptVersion, ProvenanceRecord
-from .schemas import AI_OUTPUT_SCHEMAS, APIModel
+from .schemas import AI_OUTPUT_SCHEMAS, APIModel, EnvironmentActionContext
 
 CAPABILITIES = tuple(AI_OUTPUT_SCHEMAS)
 ATTESTED_AI_PROVIDER = "openai"
@@ -23,8 +24,32 @@ ATTESTED_AI_REASONING_EFFORT = "low"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
+def _context_resource_refs(context: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract bounded logical references without pretending they are snapshots."""
+
+    references: list[dict[str, Any]] = []
+    for key, value in sorted(context.items()):
+        if not key.endswith("Id") or not isinstance(value, (str, uuid.UUID)):
+            continue
+        try:
+            resource_id = uuid.UUID(str(value))
+        except ValueError:
+            continue
+        resource_type = key[:-2] or "resource"
+        references.append(
+            {
+                "resourceType": resource_type,
+                "resourceId": str(resource_id),
+                "referenceHash": hash_json(
+                    {"resourceType": resource_type, "resourceId": str(resource_id)}
+                ),
+            }
+        )
+    return references[:64]
+
+
 def deterministic_output(capability: str, context: dict[str, Any]) -> dict[str, Any]:
-    """Clinically conservative fixtures keep the demo available during provider outages."""
+    """Conservative fixtures keep synthetic workflows available during provider outages."""
 
     patient_name = context.get("patientName", "the patient")
     outputs: dict[str, dict[str, Any]] = {
@@ -121,6 +146,36 @@ def deterministic_output(capability: str, context: dict[str, Any]) -> dict[str, 
             "warnings": [],
         },
     }
+    if capability == "environment_action":
+        # Keep the capability-wide schema fixture executable for generic health checks.
+        # The environment service validates and always supplies the real bounded context.
+        policy_context = (
+            context
+            if "observation" in context and "allowedActions" in context
+            else {"observation": {}, "allowedActions": ["escalate"]}
+        )
+        policy_input = EnvironmentActionContext.model_validate(policy_context)
+        outstanding_work = policy_input.observation.get("outstandingWork", [])
+        if not isinstance(outstanding_work, list):
+            outstanding_work = []
+        selected = next(
+            (
+                action
+                for action in outstanding_work
+                if isinstance(action, str) and action in policy_input.allowed_actions
+            ),
+            None,
+        )
+        if selected is None:
+            selected = next(
+                (
+                    action
+                    for action in policy_input.allowed_actions
+                    if action != "escalate"
+                ),
+                policy_input.allowed_actions[0],
+            )
+        return {"type": selected, "reasonCode": "deterministic_fallback"}
     if capability not in outputs:
         raise ValueError(f"Unsupported AI capability: {capability}")
     return outputs[capability]
@@ -139,15 +194,25 @@ async def _live_inference(
         raise RuntimeError("OpenAI is not configured")
     schema = AI_OUTPUT_SCHEMAS[capability]
     conservative_reference = deterministic_output(capability, context)
-    developer_instruction = (
-        "You are a clinical documentation assistant operating only on synthetic demo data. "
-        "Return one JSON object and no prose. Follow the supplied output schema. "
-        "Do not invent diagnoses, medications, codes, or facts beyond the context and "
-        "conservative reference. Start from conservativeReference and preserve every "
-        "required key; change a value only when context explicitly supports a safer value. "
-        "Preserve uncertainty and route unsafe ambiguity to staff. "
-        f"Execute this versioned instruction: {prompt_template}"
-    )
+    if capability == "environment_action":
+        developer_instruction = (
+            "You are an evaluation policy acting only in an isolated synthetic environment. "
+            "Return one JSON object and no prose. Select exactly one type listed in "
+            "allowedActions. Use only the supplied observation and allowedActions; do not "
+            "infer hidden patient facts, future state, rewards, or transition rules. Escalate "
+            "when the observation does not safely support another allowed action. "
+            f"Execute this versioned instruction: {prompt_template}"
+        )
+    else:
+        developer_instruction = (
+            "You are a clinical documentation assistant operating only on synthetic demo data. "
+            "Return one JSON object and no prose. Follow the supplied output schema. "
+            "Do not invent diagnoses, medications, codes, or facts beyond the context and "
+            "conservative reference. Start from conservativeReference and preserve every "
+            "required key; change a value only when context explicitly supports a safer value. "
+            "Preserve uncertainty and route unsafe ambiguity to staff. "
+            f"Execute this versioned instruction: {prompt_template}"
+        )
     model_input = {
         "capability": capability,
         "context": context,
@@ -247,6 +312,10 @@ def _validated_model_output(
     schema = AI_OUTPUT_SCHEMAS[capability]
     output = schema.model_validate(raw)
     serialized = output.model_dump(mode="json", by_alias=True)
+    if capability == "environment_action":
+        policy_input = EnvironmentActionContext.model_validate(context)
+        if serialized["type"] not in policy_input.allowed_actions:
+            raise ValueError("Environment policy selected an action outside the allowed set")
     if (
         capability == "patient_message"
         and context.get("uncertain")
@@ -284,6 +353,11 @@ async def run_ai(
     patient_id: uuid.UUID | None,
     requested_by_user_id: uuid.UUID | None,
     minimum_necessary: bool = True,
+    purpose_of_use: str = "care_operations",
+    sensitivity: str | None = None,
+    source_entity_type: str | None = None,
+    source_entity_id: uuid.UUID | None = None,
+    actor_role: str = "clinical_assistant",
 ) -> tuple[AIRun, APIModel]:
     schema = AI_OUTPUT_SCHEMAS.get(capability)
     if schema is None:
@@ -310,11 +384,23 @@ async def run_ai(
             prompt_template=prompt.template,
             prompt_hash=prompt_hash,
         )
-        validated = schema.model_validate(raw)
+        conservative_reference = deterministic_output(capability, context)
+        validated = _validated_model_output(
+            capability,
+            context,
+            raw,
+            conservative_reference,
+        )
     except (httpx.HTTPError, RuntimeError, TimeoutError, ValidationError, ValueError) as exc:
         fallback_used = True
         error = str(exc)[:500]
-        validated = schema.model_validate(deterministic_output(capability, context))
+        conservative_reference = deterministic_output(capability, context)
+        validated = _validated_model_output(
+            capability,
+            context,
+            conservative_reference,
+            conservative_reference,
+        )
         provider = "deterministic_fallback"
         model = "ambrosia-fixture-2026.1"
 
@@ -344,21 +430,41 @@ async def run_ai(
     session.add(run)
     await session.flush()
     canonical_input = json.dumps(context, sort_keys=True, default=str)
+    output_content = validated.model_dump(mode="json", by_alias=True)
+    input_hash = hashlib.sha256(canonical_input.encode()).hexdigest()
+    output_hash = hash_json(output_content)
+    resource_refs = _context_resource_refs(context)
+    effective_sensitivity = sensitivity or ("restricted" if patient_id else "operational")
+    input_metadata: dict[str, Any] = {
+        "contextHash": input_hash,
+        "contextKeys": sorted(str(key) for key in context),
+        "resourceRefCount": len(resource_refs),
+        "contentStored": False,
+    }
+    if purpose_of_use != "care_operations":
+        input_metadata.update(
+            {
+                "purposeOfUse": purpose_of_use,
+                "sensitivity": effective_sensitivity,
+            }
+        )
     session.add_all(
         [
             AIInput(
                 organization_id=organization_id,
                 ai_run_id=run.id,
                 input_type="minimum_necessary_context",
-                content_json=context,
-                content_hash=hashlib.sha256(canonical_input.encode()).hexdigest(),
+                content_json=input_metadata,
+                content_hash=input_hash,
                 minimum_necessary=minimum_necessary,
+                resource_refs_json=resource_refs,
+                schema_version=1,
             ),
             AIOutput(
                 organization_id=organization_id,
                 ai_run_id=run.id,
                 output_type=capability,
-                content_json=validated.model_dump(mode="json", by_alias=True),
+                content_json=output_content,
                 schema_valid=True,
                 confidence=0,
             ),
@@ -369,17 +475,49 @@ async def run_ai(
                 activity=f"generated_{capability}",
                 actor_user_id=requested_by_user_id,
                 ai_run_id=run.id,
-                source_entity_type="patient" if patient_id else None,
-                source_entity_id=patient_id,
+                source_entity_type=source_entity_type
+                or ("patient" if patient_id else None),
+                source_entity_id=source_entity_id or patient_id,
                 detail_json={
                     "promptVersion": prompt.version,
                     "promptHash": prompt_hash,
                     "fallbackUsed": fallback_used,
                     "schemaValid": True,
                     "confidenceMeaning": "not_calibrated",
+                    "purposeOfUse": purpose_of_use,
+                    "sensitivity": effective_sensitivity,
                 },
             ),
         ]
+    )
+    await record_domain_event(
+        session,
+        organization_id=organization_id,
+        event_type="ai.run.completed",
+        aggregate_type="ai_run",
+        aggregate_id=run.id,
+        aggregate_sequence=1,
+        patient_id=patient_id,
+        actor_kind="ai",
+        actor_user_id=requested_by_user_id,
+        actor_role=actor_role,
+        occurred_at=recorded_at,
+        payload={
+            "capability": capability,
+            "promptVersion": prompt.version,
+            "promptHash": prompt_hash,
+            "inputHash": input_hash,
+            "outputHash": output_hash,
+            "provider": provider,
+            "model": model,
+            "fallbackUsed": fallback_used,
+            "schemaValid": True,
+            "minimumNecessary": minimum_necessary,
+            "latencyMs": elapsed_ms,
+        },
+        idempotency_key=f"ai-run:{run.id}:completed",
+        sensitivity=effective_sensitivity,
+        purpose_of_use=purpose_of_use,
     )
     await session.flush()
     return run, validated

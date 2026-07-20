@@ -75,6 +75,7 @@ Ownership means the module is the sole writer of its rules and tables. Other mod
 | Revenue cycle | Revenue workspace and RCM use cases | eligibility, estimates, claims, events, denials, appeals, payments, balances | encounters, coding proposals, provider adapters |
 | MSO analytics | Operations workspace and analytics query services | metric definitions and aggregate queries | committed operational, clinical, and RCM facts |
 | AI orchestration | backend AI application/adapters | prompts, schemas, runs, provenance, fallback, proposed actions | minimum-necessary read APIs; never direct record mutation |
+| Learning substrate and evaluation | backend learning use cases, append-only events and governed manifests | domain-event outbox, episodes, point-in-time observations, decisions/actions/outcomes, dataset releases, isolated environment runs and rewards | authorized application use cases; never direct browser/model writes or care-plane mutation |
 | Identity and authorization | backend auth/policy | sessions, personas, memberships, role and tenant policy | organization data only |
 | Workflow engine | backend workflow/worker | durable jobs, events, retry/idempotency policy, scheduled jobs | application use cases and Neon |
 | Provider adapters | backend integrations | eligibility, clearinghouse, remittance, SMS, eRx, pathology, payments | stable integration interfaces |
@@ -169,6 +170,16 @@ An `ai_run` captures capability, input references/checksums, prompt version, mod
 
 The managed domain API calls OpenAI `gpt-5.6-luna` directly through the Responses API with `reasoning.effort=low` and `store=false`. There is no local model runtime, GPU allocation, or separate inference endpoint. Exact provider/model/reasoning configuration, prompt hashing, schema validation, and capability-specific semantic rules are required before the backend may record a live run; every failure routes to a deterministic, provenance-labeled proposal rather than gaining broader authority.
 
+## Learning and environment contract
+
+Consequential use cases write a bounded `domain_event` in the same transaction as the care, operational, or financial mutation. The event table is also the scale-to-zero transactional outbox; consumers advance separate checkpoints and cannot edit source history. Security audit, derivation provenance, workflow diagnostics, and decision trajectories remain distinct records with distinct purposes.
+
+Learning episodes link events without owning the clinical record. Every decision points to a point-in-time observation manifest, the complete offered action set, applicable policy versions, the selected action or non-action, resulting events, and later observed outcomes. Effective time and recorded time are both retained. Historical replay ends at the first action divergence unless a versioned simulator or expert adjudication supplies the branch.
+
+The environment API is a presenter-only synthetic control plane. Runs clone server-owned synthetic state into an isolated episode; steps accept only a typed action, expected sequence, and idempotency key. Observations, transitions, outcomes, reward components, safety violations, and simulator identities are computed server-side. An environment run cannot mutate the canonical Sarah care graph, and no endpoint exposes raw dataset membership or storage locators.
+
+Dataset creation is a governed release process, not a query over production tables. A release freezes purpose, prohibited uses, legal basis, cohort/exclusions, temporal cutoffs, terminology/schema versions, de-identification method, split strategy, lineage, retention/deletion policy, and approval. See [`learning-environment.md`](./learning-environment.md) for the executable data and simulation contract.
+
 ## Tenancy and time
 
 - Every tenant-owned row includes `organization_id`; child foreign keys cannot be used to escape that scope.
@@ -186,3 +197,6 @@ The managed domain API calls OpenAI `gpt-5.6-luna` directly through the Response
 | Proposals before AI actions | Model output is probabilistic and clinical/financial changes are consequential | Structured approval and provenance are first-class records |
 | Deterministic provider/model fallbacks | A demo cannot depend on network timing or cold inference | Fallback identity must be visible and behaviorally equivalent at the domain boundary |
 | Append-only signed records and event history | Medical/legal integrity requires reconstruction | Corrections and state changes add records rather than rewrite history |
+| Transactional event table before streaming infrastructure | Mutation/event atomicity matters before transport scale | Consumers use durable checkpoints; a streaming export can be added without changing producers |
+| Separate care, learning and simulation planes | Training/evaluation must not gain authority over records | Live evidence is referenced, synthetic runs are isolated, and rewards remain server-owned |
+| Stop replay at unsupported counterfactuals | A recorded future is valid only under the recorded prior actions | Divergent branches require a versioned simulator, expert evidence, or explicit termination |

@@ -11,6 +11,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     event,
     inspect,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from .database import Base
@@ -28,6 +30,9 @@ from .database import Base
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+LEARNING_JSON = JSON().with_variant(JSONB(), "postgresql")
 
 
 class RecordMixin:
@@ -38,6 +43,18 @@ class RecordMixin:
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class OptimisticVersionMixin:
+    """Opt-in SQLAlchemy optimistic concurrency for mutable records."""
+
+    record_version: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+
+    @declared_attr.directive
+    def __mapper_args__(cls) -> dict[str, object]:
+        return {"version_id_col": cls.record_version}
 
 
 class TenantMixin:
@@ -132,12 +149,8 @@ class StaffProfile(TenantMixin, RecordMixin, Base):
 class PatientAccount(TenantMixin, RecordMixin, Base):
     __tablename__ = "patient_accounts"
     __table_args__ = (
-        UniqueConstraint(
-            "organization_id", "user_id", name="uq_patient_accounts_org_user"
-        ),
-        UniqueConstraint(
-            "organization_id", "patient_id", name="uq_patient_accounts_org_patient"
-        ),
+        UniqueConstraint("organization_id", "user_id", name="uq_patient_accounts_org_user"),
+        UniqueConstraint("organization_id", "patient_id", name="uq_patient_accounts_org_patient"),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -680,9 +693,12 @@ class TaskComment(TenantMixin, RecordMixin, Base):
     body: Mapped[str] = mapped_column(Text)
 
 
-class WorkflowRun(TenantMixin, RecordMixin, Base):
+class WorkflowRun(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
     __tablename__ = "workflow_runs"
-    __table_args__ = (UniqueConstraint("organization_id", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key"),
+        CheckConstraint("next_event_sequence > 0", name="positive_next_event_sequence"),
+    )
 
     workflow_type: Mapped[str] = mapped_column(String(80), index=True)
     entity_type: Mapped[str] = mapped_column(String(64))
@@ -691,12 +707,17 @@ class WorkflowRun(TenantMixin, RecordMixin, Base):
     idempotency_key: Mapped[str] = mapped_column(String(160))
     input_json: Mapped[dict] = mapped_column(JSON, default=dict)
     output_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    next_event_sequence: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class WorkflowEvent(TenantMixin, RecordMixin, Base):
     __tablename__ = "workflow_events"
+    __table_args__ = (
+        UniqueConstraint("workflow_run_id", "sequence", name="uq_workflow_events_run_sequence"),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+    )
 
     workflow_run_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("workflow_runs.id", ondelete="CASCADE"), index=True
@@ -706,9 +727,12 @@ class WorkflowEvent(TenantMixin, RecordMixin, Base):
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
-class AutomationPolicy(TenantMixin, RecordMixin, Base):
+class AutomationPolicy(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
     __tablename__ = "automation_policies"
-    __table_args__ = (UniqueConstraint("organization_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name"),
+        UniqueConstraint("organization_id", "id", name="uq_automation_policies_org_id"),
+    )
 
     name: Mapped[str] = mapped_column(String(160))
     event_type: Mapped[str] = mapped_column(String(80), index=True)
@@ -716,6 +740,18 @@ class AutomationPolicy(TenantMixin, RecordMixin, Base):
     actions_json: Mapped[list] = mapped_column(JSON, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "policy_versions.id",
+            name="fk_automation_policies_current_version",
+            ondelete="SET NULL",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        index=True,
+    )
 
 
 class Notification(TenantMixin, RecordMixin, Base):
@@ -957,6 +993,11 @@ class AIInput(TenantMixin, RecordMixin, Base):
     content_json: Mapped[dict] = mapped_column(JSON)
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     minimum_necessary: Mapped[bool] = mapped_column(Boolean, default=True)
+    resource_refs_json: Mapped[list] = mapped_column(
+        LEARNING_JSON, default=list, server_default="[]"
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    snapshot_ref: Mapped[str | None] = mapped_column(String(500))
 
 
 class AIOutput(TenantMixin, RecordMixin, Base):
@@ -971,8 +1012,15 @@ class AIOutput(TenantMixin, RecordMixin, Base):
     confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("0.900"))
 
 
-class ProposedAction(TenantMixin, RecordMixin, Base):
+class ProposedAction(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
     __tablename__ = "proposed_actions"
+    __table_args__ = (
+        CheckConstraint("proposal_version > 0", name="positive_proposal_version"),
+        CheckConstraint(
+            "expected_target_version IS NULL OR expected_target_version > 0",
+            name="positive_expected_target_version",
+        ),
+    )
 
     ai_run_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("ai_runs.id", ondelete="SET NULL"), index=True
@@ -987,10 +1035,20 @@ class ProposedAction(TenantMixin, RecordMixin, Base):
     rationale: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default="proposed", index=True)
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    proposal_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    expected_target_version: Mapped[int | None] = mapped_column(Integer)
+    payload_hash: Mapped[str | None] = mapped_column(String(64))
 
 
 class Approval(TenantMixin, RecordMixin, Base):
     __tablename__ = "approvals"
+    __table_args__ = (
+        CheckConstraint("proposed_action_version > 0", name="positive_proposed_action_version"),
+        CheckConstraint(
+            "expected_target_version IS NULL OR expected_target_version > 0",
+            name="positive_expected_target_version",
+        ),
+    )
 
     proposed_action_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("proposed_actions.id", ondelete="RESTRICT"), index=True
@@ -1001,6 +1059,10 @@ class Approval(TenantMixin, RecordMixin, Base):
     decision: Mapped[str] = mapped_column(String(24), index=True)
     comment: Mapped[str | None] = mapped_column(String(500))
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    proposed_action_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    expected_target_version: Mapped[int | None] = mapped_column(Integer)
+    reviewer_role: Mapped[str | None] = mapped_column(String(64))
+    edit_diff_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict, server_default="{}")
 
 
 class ProvenanceRecord(TenantMixin, RecordMixin, Base):
@@ -1074,6 +1136,963 @@ class IntegrationEvent(TenantMixin, RecordMixin, Base):
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(24), default="processed", index=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# Learning substrate
+
+
+class DomainEvent(TenantMixin, RecordMixin, Base):
+    __tablename__ = "domain_events"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_domain_events_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "aggregate_type",
+            "aggregate_id",
+            "aggregate_sequence",
+            name="uq_domain_events_aggregate_sequence",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "causation_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_domain_events_causation",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        CheckConstraint("aggregate_sequence > 0", name="positive_aggregate_sequence"),
+        Index(
+            "ix_domain_events_org_recorded",
+            "organization_id",
+            "recorded_at",
+            "id",
+        ),
+        Index(
+            "ix_domain_events_org_type_occurred",
+            "organization_id",
+            "event_type",
+            "occurred_at",
+        ),
+        Index(
+            "ix_domain_events_org_correlation",
+            "organization_id",
+            "correlation_id",
+        ),
+        Index(
+            "ix_domain_events_org_patient_occurred",
+            "organization_id",
+            "patient_id",
+            "occurred_at",
+        ),
+    )
+
+    event_type: Mapped[str] = mapped_column(String(80))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    aggregate_type: Mapped[str] = mapped_column(String(64))
+    aggregate_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    aggregate_sequence: Mapped[int] = mapped_column(Integer)
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("patients.id", ondelete="SET NULL")
+    )
+    actor_kind: Mapped[str] = mapped_column(String(32))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    actor_role: Mapped[str | None] = mapped_column(String(64))
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    causation_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    payload_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    sensitivity: Mapped[str] = mapped_column(String(32), default="operational")
+    purpose_of_use: Mapped[str] = mapped_column(String(64), default="care_operations")
+
+
+class EventDeliveryCheckpoint(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "event_delivery_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_event_delivery_checkpoints_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "consumer_name",
+            "partition_key",
+            name="uq_event_delivery_checkpoints_consumer_partition",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "last_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_event_delivery_checkpoints_last_event",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_event_delivery_checkpoints_org_lease",
+            "organization_id",
+            "status",
+            "lease_expires_at",
+        ),
+    )
+
+    consumer_name: Mapped[str] = mapped_column(String(120))
+    partition_key: Mapped[str] = mapped_column(String(120), default="default")
+    last_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    last_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(24), default="idle")
+    lease_owner: Mapped[str | None] = mapped_column(String(160))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class EpisodeDefinition(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "episode_definitions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_episode_definitions_org_id"),
+        UniqueConstraint(
+            "organization_id", "slug", "version", name="uq_episode_definitions_slug_version"
+        ),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        CheckConstraint("max_steps > 0", name="positive_max_steps"),
+        CheckConstraint("max_duration_seconds > 0", name="positive_max_duration_seconds"),
+        CheckConstraint("status IN ('draft','released')", name="valid_status"),
+        Index(
+            "ix_episode_definitions_org_status_released",
+            "organization_id",
+            "status",
+            "released_at",
+        ),
+        Index(
+            "ix_episode_definitions_org_type",
+            "organization_id",
+            "episode_type",
+        ),
+    )
+
+    slug: Mapped[str] = mapped_column(String(100))
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    episode_type: Mapped[str] = mapped_column(String(80))
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    start_conditions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    termination_conditions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    observation_schema_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    action_schema_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    reward_schema_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    max_steps: Mapped[int] = mapped_column(Integer, default=100)
+    max_duration_seconds: Mapped[int] = mapped_column(Integer, default=2_592_000)
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EpisodeInstance(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "episode_instances"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_episode_instances_org_id"),
+        UniqueConstraint("organization_id", "episode_key", name="uq_episode_instances_episode_key"),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_definition_id"],
+            ["episode_definitions.organization_id", "episode_definitions.id"],
+            name="fk_episode_instances_definition",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "start_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_episode_instances_start_event",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "end_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_episode_instances_end_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "source_kind IN ('live','historical','synthetic')", name="valid_source_kind"
+        ),
+        CheckConstraint(
+            "status IN ('pending','running','completed','failed','terminated')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at",
+            name="valid_time_range",
+        ),
+        Index(
+            "ix_episode_instances_org_status_started",
+            "organization_id",
+            "status",
+            "started_at",
+        ),
+        Index(
+            "ix_episode_instances_org_patient_started",
+            "organization_id",
+            "patient_id",
+            "started_at",
+        ),
+    )
+
+    episode_definition_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    episode_key: Mapped[str] = mapped_column(String(160))
+    source_kind: Mapped[str] = mapped_column(String(24))
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("patients.id", ondelete="SET NULL")
+    )
+    seed: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    start_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    end_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    counterfactual_boundary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+
+
+class EpisodeEventLink(TenantMixin, RecordMixin, Base):
+    __tablename__ = "episode_event_links"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_episode_event_links_org_id"),
+        UniqueConstraint("episode_instance_id", "sequence", name="uq_episode_event_links_sequence"),
+        UniqueConstraint(
+            "episode_instance_id",
+            "domain_event_id",
+            name="uq_episode_event_links_event",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_episode_event_links_episode",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "domain_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_episode_event_links_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        Index(
+            "ix_episode_event_links_org_event",
+            "organization_id",
+            "domain_event_id",
+        ),
+    )
+
+    episode_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    domain_event_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(32), default="trajectory")
+
+
+class ObservationManifest(TenantMixin, RecordMixin, Base):
+    __tablename__ = "observation_manifests"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_observation_manifests_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "episode_instance_id",
+            "id",
+            name="uq_observation_manifests_episode_id",
+        ),
+        UniqueConstraint(
+            "episode_instance_id", "sequence", name="uq_observation_manifests_sequence"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_observation_manifests_episode",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        Index(
+            "ix_observation_manifests_org_as_of",
+            "organization_id",
+            "as_of_at",
+        ),
+    )
+
+    episode_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    as_of_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    recorded_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    manifest_hash: Mapped[str] = mapped_column(String(64))
+    snapshot_ref: Mapped[str | None] = mapped_column(String(500))
+    synthetic_snapshot_json: Mapped[dict] = mapped_column(
+        LEARNING_JSON,
+        default=dict,
+        comment=("Synthetic-only inline observation snapshot; live manifests use snapshot_ref"),
+    )
+    sensitivity: Mapped[str] = mapped_column(String(32), default="restricted")
+    purpose_of_use: Mapped[str] = mapped_column(String(64), default="care_operations")
+
+
+class ObservationResource(TenantMixin, RecordMixin, Base):
+    __tablename__ = "observation_resources"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_observation_resources_org_id"),
+        UniqueConstraint(
+            "observation_manifest_id",
+            "sequence",
+            name="uq_observation_resources_sequence",
+        ),
+        UniqueConstraint(
+            "observation_manifest_id",
+            "resource_type",
+            "resource_id",
+            "resource_version",
+            name="uq_observation_resources_version",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "observation_manifest_id"],
+            ["observation_manifests.organization_id", "observation_manifests.id"],
+            name="fk_observation_resources_manifest",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        CheckConstraint("resource_version > 0", name="positive_resource_version"),
+        Index(
+            "ix_observation_resources_org_resource",
+            "organization_id",
+            "resource_type",
+            "resource_id",
+            "resource_version",
+        ),
+    )
+
+    observation_manifest_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    resource_type: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    resource_version: Mapped[int] = mapped_column(Integer)
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    snapshot_ref: Mapped[str | None] = mapped_column(String(500))
+
+
+class DecisionPoint(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "decision_points"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_decision_points_org_id"),
+        UniqueConstraint("episode_instance_id", "sequence", name="uq_decision_points_sequence"),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_decision_points_episode",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id", "observation_manifest_id"],
+            [
+                "observation_manifests.organization_id",
+                "observation_manifests.episode_instance_id",
+                "observation_manifests.id",
+            ],
+            name="fk_decision_points_observation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "trigger_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_decision_points_trigger_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        CheckConstraint("status IN ('open','decided','expired','cancelled')", name="valid_status"),
+        CheckConstraint(
+            "decided_at IS NULL OR decided_at >= opened_at", name="valid_decision_time"
+        ),
+        Index(
+            "ix_decision_points_org_type_opened",
+            "organization_id",
+            "decision_type",
+            "opened_at",
+        ),
+        Index(
+            "ix_decision_points_org_status_deadline",
+            "organization_id",
+            "status",
+            "deadline_at",
+        ),
+    )
+
+    episode_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    decision_type: Mapped[str] = mapped_column(String(80))
+    observation_manifest_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    trigger_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    actor_kind: Mapped[str] = mapped_column(String(32))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    actor_role: Mapped[str | None] = mapped_column(String(64))
+    available_actions_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    policy_refs_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    displayed_proposal_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("proposed_actions.id", ondelete="SET NULL")
+    )
+    recommendation_rendered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(24), default="open")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ActionAttempt(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "action_attempts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_action_attempts_org_id"),
+        UniqueConstraint("decision_point_id", "sequence", name="uq_action_attempts_sequence"),
+        UniqueConstraint(
+            "organization_id", "idempotency_key", name="uq_action_attempts_idempotency"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "decision_point_id"],
+            ["decision_points.organization_id", "decision_points.id"],
+            name="fk_action_attempts_decision",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "result_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_action_attempts_result_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        CheckConstraint(
+            "proposal_version IS NULL OR proposal_version > 0",
+            name="positive_proposal_version",
+        ),
+        CheckConstraint(
+            "expected_target_version IS NULL OR expected_target_version > 0",
+            name="positive_expected_target_version",
+        ),
+        CheckConstraint(
+            "status IN ('pending','succeeded','failed','rejected','no_action','cancelled')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "executed_at IS NULL OR executed_at >= attempted_at", name="valid_execution_time"
+        ),
+        Index(
+            "ix_action_attempts_org_status_attempted",
+            "organization_id",
+            "status",
+            "attempted_at",
+        ),
+        Index(
+            "ix_action_attempts_org_type_attempted",
+            "organization_id",
+            "action_type",
+            "attempted_at",
+        ),
+    )
+
+    decision_point_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    actor_kind: Mapped[str] = mapped_column(String(32))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    ai_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("ai_runs.id", ondelete="SET NULL")
+    )
+    proposed_action_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("proposed_actions.id", ondelete="SET NULL")
+    )
+    proposal_version: Mapped[int | None] = mapped_column(Integer)
+    action_type: Mapped[str] = mapped_column(String(80))
+    arguments_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    expected_target_type: Mapped[str | None] = mapped_column(String(64))
+    expected_target_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    expected_target_version: Mapped[int | None] = mapped_column(Integer)
+    idempotency_key: Mapped[str | None] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    human_edit_diff_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+
+
+class OutcomeObservation(TenantMixin, RecordMixin, Base):
+    __tablename__ = "outcome_observations"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_outcome_observations_org_id"),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_outcome_observations_episode",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "decision_point_id"],
+            ["decision_points.organization_id", "decision_points.id"],
+            name="fk_outcome_observations_decision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "action_attempt_id"],
+            ["action_attempts.organization_id", "action_attempts.id"],
+            name="fk_outcome_observations_action",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "source_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_outcome_observations_source_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "provenance_kind IN ('observed','simulated','expert','unsupported_counterfactual')",
+            name="valid_provenance_kind",
+        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="valid_confidence"),
+        CheckConstraint(
+            "source_resource_version IS NULL OR source_resource_version > 0",
+            name="positive_source_resource_version",
+        ),
+        CheckConstraint(
+            "window_end_at IS NULL OR window_start_at IS NULL OR window_end_at >= window_start_at",
+            name="valid_observation_window",
+        ),
+        Index(
+            "ix_outcome_observations_org_type_observed",
+            "organization_id",
+            "outcome_type",
+            "observed_at",
+        ),
+        Index(
+            "ix_outcome_observations_org_episode_observed",
+            "organization_id",
+            "episode_instance_id",
+            "observed_at",
+        ),
+    )
+
+    episode_instance_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    decision_point_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    action_attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    outcome_type: Mapped[str] = mapped_column(String(80))
+    value_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    provenance_kind: Mapped[str] = mapped_column(String(40))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    window_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_resource_type: Mapped[str | None] = mapped_column(String(64))
+    source_resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    source_resource_version: Mapped[int | None] = mapped_column(Integer)
+    source_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    simulator_version: Mapped[str | None] = mapped_column(String(120))
+    confidence: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("1.000"))
+    content_hash: Mapped[str] = mapped_column(String(64))
+
+
+class PolicyVersion(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "policy_versions"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_policy_versions_org_id"),
+        UniqueConstraint(
+            "automation_policy_id", "version", name="uq_policy_versions_policy_version"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "automation_policy_id"],
+            ["automation_policies.organization_id", "automation_policies.id"],
+            name="fk_policy_versions_policy",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        CheckConstraint("status IN ('draft','released')", name="valid_status"),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_from IS NULL OR effective_to >= effective_from",
+            name="valid_effective_range",
+        ),
+        Index(
+            "ix_policy_versions_org_status_effective",
+            "organization_id",
+            "status",
+            "effective_from",
+        ),
+    )
+
+    automation_policy_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    conditions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    actions_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SimulationScenario(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "simulation_scenarios"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_simulation_scenarios_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "slug",
+            "version",
+            name="uq_simulation_scenarios_slug_version",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_definition_id"],
+            ["episode_definitions.organization_id", "episode_definitions.id"],
+            name="fk_simulation_scenarios_definition",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        CheckConstraint("synthetic_only", name="synthetic_only_required"),
+        CheckConstraint("status IN ('draft','released')", name="valid_status"),
+        Index(
+            "ix_simulation_scenarios_org_status_released",
+            "organization_id",
+            "status",
+            "released_at",
+        ),
+    )
+
+    episode_definition_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    slug: Mapped[str] = mapped_column(String(100))
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text)
+    seed: Mapped[int] = mapped_column(Integer)
+    logical_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    initial_state_json: Mapped[dict] = mapped_column(
+        LEARNING_JSON,
+        default=dict,
+        comment="Server-owned synthetic simulator state; never populated from live PHI",
+    )
+    initial_state_refs_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    actor_models_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    transition_rules_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    reward_spec_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    simulator_versions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    fault_plan_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    synthetic_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    content_hash: Mapped[str] = mapped_column(String(64))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DatasetRelease(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "dataset_releases"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_dataset_releases_org_id"),
+        UniqueConstraint(
+            "organization_id", "name", "version", name="uq_dataset_releases_name_version"
+        ),
+        CheckConstraint("version > 0", name="positive_version"),
+        CheckConstraint("schema_version > 0", name="positive_schema_version"),
+        CheckConstraint("outcome_window_days >= 0", name="nonnegative_outcome_window"),
+        CheckConstraint("status IN ('draft','released')", name="valid_status"),
+        Index(
+            "ix_dataset_releases_org_status_released",
+            "organization_id",
+            "status",
+            "released_at",
+        ),
+    )
+
+    name: Mapped[str] = mapped_column(String(160))
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    intended_uses_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    prohibited_uses_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    legal_basis: Mapped[str] = mapped_column(String(160))
+    cohort_definition_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    exclusion_criteria_json: Mapped[list] = mapped_column(LEARNING_JSON, default=list)
+    observation_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    outcome_window_days: Mapped[int] = mapped_column(Integer, default=0)
+    terminology_versions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    schema_versions_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    deidentification_method: Mapped[str] = mapped_column(String(120))
+    split_strategy_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    lineage_uri: Mapped[str] = mapped_column(String(500))
+    lineage_hash: Mapped[str] = mapped_column(String(64))
+    retention_policy_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    deletion_policy_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    approved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EnvironmentRun(TenantMixin, OptimisticVersionMixin, RecordMixin, Base):
+    __tablename__ = "environment_runs"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_environment_runs_org_id"),
+        UniqueConstraint("organization_id", "run_key", name="uq_environment_runs_run_key"),
+        ForeignKeyConstraint(
+            ["organization_id", "simulation_scenario_id"],
+            ["simulation_scenarios.organization_id", "simulation_scenarios.id"],
+            name="fk_environment_runs_scenario",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_definition_id"],
+            ["episode_definitions.organization_id", "episode_definitions.id"],
+            name="fk_environment_runs_definition",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_environment_runs_episode",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "dataset_release_id"],
+            ["dataset_releases.organization_id", "dataset_releases.id"],
+            name="fk_environment_runs_dataset",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("mode IN ('replay','simulation','shadow')", name="valid_mode"),
+        CheckConstraint(
+            "status IN ('pending','running','completed','failed','terminated')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "ended_at IS NULL OR started_at IS NULL OR ended_at >= started_at",
+            name="valid_time_range",
+        ),
+        CheckConstraint("current_step >= 0", name="nonnegative_current_step"),
+        CheckConstraint("hard_violation_count >= 0", name="nonnegative_hard_violation_count"),
+        Index(
+            "ix_environment_runs_org_status_created",
+            "organization_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_environment_runs_org_mode_created",
+            "organization_id",
+            "mode",
+            "created_at",
+        ),
+    )
+
+    run_key: Mapped[str] = mapped_column(String(160))
+    mode: Mapped[str] = mapped_column(String(24))
+    simulation_scenario_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    episode_definition_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    episode_instance_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    dataset_release_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    agent_kind: Mapped[str] = mapped_column(String(64))
+    agent_model: Mapped[str | None] = mapped_column(String(120))
+    prompt_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("prompt_versions.id", ondelete="SET NULL")
+    )
+    code_version: Mapped[str] = mapped_column(String(120))
+    seed: Mapped[int | None] = mapped_column(Integer)
+    config_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    state_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    total_reward_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    hard_violation_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    termination_reason: Mapped[str | None] = mapped_column(String(240))
+
+
+class EnvironmentStep(TenantMixin, RecordMixin, Base):
+    __tablename__ = "environment_steps"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_environment_steps_org_id"),
+        UniqueConstraint("environment_run_id", "step_number", name="uq_environment_steps_run_step"),
+        ForeignKeyConstraint(
+            ["organization_id", "environment_run_id"],
+            ["environment_runs.organization_id", "environment_runs.id"],
+            name="fk_environment_steps_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "decision_point_id"],
+            ["decision_points.organization_id", "decision_points.id"],
+            name="fk_environment_steps_decision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "observation_manifest_id"],
+            ["observation_manifests.organization_id", "observation_manifests.id"],
+            name="fk_environment_steps_observation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "action_attempt_id"],
+            ["action_attempts.organization_id", "action_attempts.id"],
+            name="fk_environment_steps_action",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("step_number > 0", name="positive_step_number"),
+        CheckConstraint("latency_ms >= 0", name="nonnegative_latency"),
+        CheckConstraint(
+            "support_kind IN ('observed','simulated','expert','unsupported_counterfactual')",
+            name="valid_support_kind",
+        ),
+        CheckConstraint(
+            "simulator_time_after IS NULL OR simulator_time_before IS NULL "
+            "OR simulator_time_after >= simulator_time_before",
+            name="valid_simulator_time_range",
+        ),
+        Index(
+            "ix_environment_steps_org_run_step",
+            "organization_id",
+            "environment_run_id",
+            "step_number",
+        ),
+    )
+
+    environment_run_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    step_number: Mapped[int] = mapped_column(Integer)
+    decision_point_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    observation_manifest_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    action_attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    simulator_time_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    simulator_time_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state_before_hash: Mapped[str] = mapped_column(String(64))
+    state_after_hash: Mapped[str] = mapped_column(String(64))
+    support_kind: Mapped[str] = mapped_column(String(40))
+    terminated: Mapped[bool] = mapped_column(Boolean, default=False)
+    termination_reason: Mapped[str | None] = mapped_column(String(240))
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RewardComponent(TenantMixin, RecordMixin, Base):
+    __tablename__ = "reward_components"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_reward_components_org_id"),
+        UniqueConstraint(
+            "environment_step_id",
+            "component_name",
+            "evaluator_key",
+            "evaluator_version",
+            name="uq_reward_components_evaluation",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "environment_step_id"],
+            ["environment_steps.organization_id", "environment_steps.id"],
+            name="fk_reward_components_step",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "provenance_kind IN ('observed','simulated','expert','unsupported_counterfactual')",
+            name="valid_provenance_kind",
+        ),
+        Index(
+            "ix_reward_components_org_hard_computed",
+            "organization_id",
+            "hard_violation",
+            "computed_at",
+        ),
+        Index(
+            "ix_reward_components_org_name_computed",
+            "organization_id",
+            "component_name",
+            "computed_at",
+        ),
+    )
+
+    environment_step_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    component_name: Mapped[str] = mapped_column(String(80))
+    evaluator_key: Mapped[str] = mapped_column(String(120))
+    evaluator_version: Mapped[str] = mapped_column(String(64))
+    value: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    weight: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("1"))
+    hard_violation: Mapped[bool] = mapped_column(Boolean, default=False)
+    evidence_json: Mapped[dict] = mapped_column(LEARNING_JSON, default=dict)
+    provenance_kind: Mapped[str] = mapped_column(String(40))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DatasetReleaseItem(TenantMixin, RecordMixin, Base):
+    __tablename__ = "dataset_release_items"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_dataset_release_items_org_id"),
+        UniqueConstraint(
+            "dataset_release_id", "sequence", name="uq_dataset_release_items_sequence"
+        ),
+        UniqueConstraint(
+            "dataset_release_id",
+            "episode_instance_id",
+            name="uq_dataset_release_items_episode",
+        ),
+        UniqueConstraint(
+            "dataset_release_id",
+            "environment_run_id",
+            name="uq_dataset_release_items_run",
+        ),
+        UniqueConstraint(
+            "dataset_release_id", "domain_event_id", name="uq_dataset_release_items_event"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "dataset_release_id"],
+            ["dataset_releases.organization_id", "dataset_releases.id"],
+            name="fk_dataset_release_items_release",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "episode_instance_id"],
+            ["episode_instances.organization_id", "episode_instances.id"],
+            name="fk_dataset_release_items_episode",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "environment_run_id"],
+            ["environment_runs.organization_id", "environment_runs.id"],
+            name="fk_dataset_release_items_run",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "domain_event_id"],
+            ["domain_events.organization_id", "domain_events.id"],
+            name="fk_dataset_release_items_event",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("sequence > 0", name="positive_sequence"),
+        CheckConstraint("split IN ('train','validation','test','holdout')", name="valid_split"),
+        CheckConstraint(
+            "(CASE WHEN episode_instance_id IS NULL THEN 0 ELSE 1 END + "
+            "CASE WHEN environment_run_id IS NULL THEN 0 ELSE 1 END + "
+            "CASE WHEN domain_event_id IS NULL THEN 0 ELSE 1 END) = 1",
+            name="exactly_one_item",
+        ),
+        Index(
+            "ix_dataset_release_items_org_release_split",
+            "organization_id",
+            "dataset_release_id",
+            "split",
+        ),
+    )
+
+    dataset_release_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True))
+    sequence: Mapped[int] = mapped_column(Integer)
+    episode_instance_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    environment_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    domain_event_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    split: Mapped[str] = mapped_column(String(24))
+    inclusion_reason: Mapped[str] = mapped_column(String(500))
 
 
 class DemoScenario(TenantMixin, RecordMixin, Base):
@@ -1160,3 +2179,80 @@ def prevent_note_amendment_mutation(
     _mapper: object, _connection: object, _target: NoteAmendment
 ) -> None:
     raise ValueError("Signed note amendments are append-only and cannot be changed or deleted.")
+
+
+def prevent_append_only_evidence_mutation(
+    _mapper: object, _connection: object, target: object
+) -> None:
+    raise ValueError(f"{type(target).__name__} is append-only evidence and cannot be changed.")
+
+
+def prevent_finalized_evidence_update(_mapper: object, _connection: object, target: object) -> None:
+    finalized_statuses = _FINALIZED_EVIDENCE_STATUSES[type(target)]
+    state = inspect(target)
+    status_history = state.attrs.status.history
+    previous_status = (
+        status_history.deleted[0] if status_history.deleted else state.attrs.status.value
+    )
+    if previous_status in finalized_statuses:
+        raise ValueError(
+            f"Finalized {type(target).__name__} evidence cannot be changed; create a new version."
+        )
+
+
+def prevent_finalized_evidence_delete(_mapper: object, _connection: object, target: object) -> None:
+    finalized_statuses = _FINALIZED_EVIDENCE_STATUSES[type(target)]
+    if inspect(target).attrs.status.value in finalized_statuses:
+        raise ValueError(f"Finalized {type(target).__name__} evidence cannot be deleted.")
+
+
+_APPEND_ONLY_EVIDENCE_MODELS = (
+    WorkflowEvent,
+    DomainEvent,
+    EpisodeEventLink,
+    ObservationManifest,
+    ObservationResource,
+    OutcomeObservation,
+    EnvironmentStep,
+    RewardComponent,
+    DatasetReleaseItem,
+)
+
+_FINALIZED_EVIDENCE_STATUSES = {
+    EpisodeDefinition: frozenset({"released"}),
+    EpisodeInstance: frozenset({"completed", "failed", "terminated"}),
+    DecisionPoint: frozenset({"decided", "expired", "cancelled"}),
+    ActionAttempt: frozenset({"succeeded", "failed", "rejected", "no_action", "cancelled"}),
+    PolicyVersion: frozenset({"released"}),
+    SimulationScenario: frozenset({"released"}),
+    EnvironmentRun: frozenset({"completed", "failed", "terminated"}),
+    DatasetRelease: frozenset({"released"}),
+}
+
+for _evidence_model in _APPEND_ONLY_EVIDENCE_MODELS:
+    event.listen(
+        _evidence_model,
+        "before_update",
+        prevent_append_only_evidence_mutation,
+        propagate=True,
+    )
+    event.listen(
+        _evidence_model,
+        "before_delete",
+        prevent_append_only_evidence_mutation,
+        propagate=True,
+    )
+
+for _evidence_model in _FINALIZED_EVIDENCE_STATUSES:
+    event.listen(
+        _evidence_model,
+        "before_update",
+        prevent_finalized_evidence_update,
+        propagate=True,
+    )
+    event.listen(
+        _evidence_model,
+        "before_delete",
+        prevent_finalized_evidence_delete,
+        propagate=True,
+    )

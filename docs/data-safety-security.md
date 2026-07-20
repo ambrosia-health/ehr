@@ -17,6 +17,7 @@ All canonical people, photographs, coverage, pathology, claims, messages, and fi
 | Modal ↔ Neon | leaked credentials, cross-tenant queries, excessive privileges, injection | scoped/rotated TLS credentials, parameterized SQL/ORM, tenant-required repositories, constraints, least privilege, audit, separate migration role |
 | Files | public patient image, malicious upload, orphaned object, metadata leakage | private objects, authorization before signed URL, MIME/signature/size checks, checksum, malware pipeline before live use, lifecycle reconciliation |
 | AI/model | prompt injection, hallucinated facts/codes, over-broad context, data retention | minimum necessary context, allowlisted retrieval, structured schemas, policy validation, proposal-only actions, human review, timeout/fallback, vendor governance |
+| Learning/export/evaluation | purpose drift, hidden PHI copies, cross-tenant pooling, re-identification, temporal leakage, reward hacking, simulator mistaken for evidence | explicit legal basis and purpose, point-in-time manifests, tenant-scoped releases, de-identification review, episode-level splits, lineage/retention/deletion, provenance labels, non-tradeable hard violations |
 | Provider/webhooks | forged result/remit, duplicates, out-of-order events | signature/mTLS as supported, replay window, external event uniqueness, reconciliation, quarantine, append-only attempt history |
 | Demo controls | reset of wrong tenant, unauthorized persona switch, fake time escaping demo | synthetic-environment guard, presenter authorization, tenant-scoped reset, confirmation/idempotency, audit, controls absent in normal mode |
 | Operators/CI | exposed secrets, unsafe preview, dependency compromise | Current demo: managed Vercel/Modal/Neon resources, native Git previews without a repository Vercel token, named GitHub environments, platform secret stores, frozen migration checks, exact model/lockfile/tool versions, and post-deploy API/model attestation. Production gate: enforce reviewers and branch controls, pin Actions by reviewed commit SHA, add secret/dependency/IaC scanning and signed provenance, and independently audit platform configuration. |
@@ -36,6 +37,7 @@ Authorization is evaluated by Modal on the current user, active membership, orga
 | Validate/submit/correct claims | — | — | supporting facts | ✓ | oversight | — |
 | View cross-practice analytics | — | limited | limited | financial scope | ✓ | — |
 | Switch persona / reset / advance time / trigger simulator | — | — | — | — | — | ✓ |
+| Create/step synthetic environment; view safe dataset manifest metadata | — | — | — | — | — | ✓ |
 
 The table is policy intent and requires executable authorization tests. “MSO owner” is not an automatic right to open every clinical note: use minimum necessary access and audited break-glass where business/legal policy permits. Patient proxy/delegate access needs its own explicit relationship and scope. The aggregate `/api/demo/bootstrap` response is subject to the same server-side role and patient scope; a convenient read model must not disclose every module to every persona.
 
@@ -65,6 +67,17 @@ Presenter capability is an orthogonal, temporary delegation—not the `mso_owner
 Models never diagnose autonomously, silently change signed records, place/send orders, transmit prescriptions, release pathology, submit claims/appeals, or contact a patient solely because generated text appears plausible. UI must show source links, uncertainty/fallback, edits, approval state, and responsible human.
 
 Prompt injection defenses treat all patient messages, documents, payer responses, and result text as untrusted data. Retrieval cannot grant tools or broaden tenant scope. Tool calls are allowlisted typed commands re-authorized after generation. System prompts and secrets never enter model-visible chart context.
+
+## Learning, dataset and RL safety
+
+- Ordinary care capture does not imply consent or legal authority for model training. Every dataset release declares intended and prohibited uses, legal basis, approving actor, cohort/exclusions, observation cutoff, outcome window, terminology/schema versions, de-identification method, lineage and deletion/retention policy.
+- Domain events and observation manifests minimize duplication: store opaque resource/version references and hashes; place any approved snapshot in governed storage. Pseudonymization or hashing alone is not treated as HIPAA de-identification.
+- Tenant filters precede resource IDs on event, episode, run and release queries. Cross-organization pooling, linkage or transfer requires an independently approved legal/contractual basis and technical release path; it is never the default export behavior.
+- Train/validation/test splits are assigned at the patient or episode level and respect time. Later notes, outcomes, policy versions and post-decision facts cannot leak into an earlier observation.
+- Recorded outcomes are labeled `observed`; simulator branches, expert labels and unsupported counterfactuals remain distinguishable. Historical replay terminates at action divergence unless a named/versioned simulator or expert supplies the branch.
+- Reward vectors retain safety, completion, timeliness, burden, financial integrity, policy compliance and equity components. Authorization, fabricated evidence, required escalation, signed-record integrity and other hard constraints are non-tradeable regardless of aggregate reward.
+- No agent learns online against a real patient or directly controls care. Models emit bounded proposed actions; the normal authorization, stale-version, consent, human-approval and audit rules are rechecked at execution time.
+- The current environment API is presenter-only and synthetic-only. The server owns initial state, observations, transitions, outcomes, evaluator versions and rewards; a client can submit only a typed action, expected sequence and idempotency key.
 
 ## Session and web controls
 
@@ -125,5 +138,7 @@ Before every demo release:
 - Verify direct calls to the Modal URL fail without a valid session and unauthorized roles receive indistinguishable not-found/forbidden behavior per policy.
 - Confirm AI outage/timeout selects a labeled deterministic fallback and cannot bypass review.
 - Confirm open pathology and failed delivery/claim events remain in accountable queues.
+- Confirm environment runs cannot mutate the canonical care graph; observations/rewards cannot be client-authored; cross-tenant run access is `404`; dataset endpoints disclose no members, storage locators or live-data fields.
+- Verify release cutoffs, episode-level splits, provenance labels, hard-violation evaluators and deletion/retention evidence before any offline training or evaluation export.
 
 If any real patient data is suspected: stop the affected service/workflow, preserve minimal evidence, revoke exposed credentials/links, notify the designated security/privacy owner, scope systems and recipients, and follow the approved incident/breach procedure. Do not investigate by copying the data into new tools.

@@ -15,11 +15,16 @@ from .database import Base, SessionLocal
 from .models import (
     AIOutput,
     AIRun,
+    AutomationPolicy,
     Claim,
     ClaimLine,
     Consent,
     DiagnosticResult,
+    DomainEvent,
     EncounterNote,
+    EpisodeDefinition,
+    EpisodeEventLink,
+    EpisodeInstance,
     IntegrationEvent,
     Lesion,
     MessageDraft,
@@ -29,9 +34,11 @@ from .models import (
     Patient,
     PatientBalance,
     Payment,
+    PolicyVersion,
     Procedure,
     ProposedAction,
     ProvenanceRecord,
+    SimulationScenario,
     Specimen,
     WorkflowRun,
 )
@@ -94,6 +101,23 @@ async def verify() -> None:
                 "proposed_actions",
                 "approvals",
                 "audit_events",
+                "domain_events",
+                "event_delivery_checkpoints",
+                "episode_definitions",
+                "episode_instances",
+                "episode_event_links",
+                "observation_manifests",
+                "observation_resources",
+                "decision_points",
+                "action_attempts",
+                "outcome_observations",
+                "policy_versions",
+                "simulation_scenarios",
+                "dataset_releases",
+                "environment_runs",
+                "environment_steps",
+                "reward_components",
+                "dataset_release_items",
             }
             if table not in Base.metadata.tables
         )
@@ -124,6 +148,81 @@ async def verify() -> None:
             raise RuntimeError(
                 "Sarah's canonical patient, lesion, encounter, and note chain is incomplete"
             )
+        learning_definition = await session.scalar(
+            select(EpisodeDefinition).where(
+                EpisodeDefinition.id == ids["learning_episode_definition_id"],
+                EpisodeDefinition.organization_id == organization.id,
+                EpisodeDefinition.status == "released",
+            )
+        )
+        learning_episode = await session.scalar(
+            select(EpisodeInstance).where(
+                EpisodeInstance.id == ids["learning_episode_id"],
+                EpisodeInstance.organization_id == organization.id,
+                EpisodeInstance.patient_id == sarah.id,
+                EpisodeInstance.source_kind == "synthetic",
+            )
+        )
+        learning_scenario = await session.scalar(
+            select(SimulationScenario).where(
+                SimulationScenario.id == ids["learning_scenario_id"],
+                SimulationScenario.organization_id == organization.id,
+                SimulationScenario.episode_definition_id
+                == ids["learning_episode_definition_id"],
+                SimulationScenario.synthetic_only.is_(True),
+                SimulationScenario.status == "released",
+            )
+        )
+        if not learning_definition or not learning_episode or not learning_scenario:
+            raise RuntimeError(
+                "Canonical learning definition, episode, or synthetic scenario is incomplete"
+            )
+        linked_event_count = int(
+            await session.scalar(
+                select(func.count(EpisodeEventLink.id)).where(
+                    EpisodeEventLink.organization_id == organization.id,
+                    EpisodeEventLink.episode_instance_id == learning_episode.id,
+                )
+            )
+            or 0
+        )
+        learning_event_count = int(
+            await session.scalar(
+                select(func.count(DomainEvent.id)).where(
+                    DomainEvent.organization_id == organization.id,
+                    DomainEvent.patient_id == sarah.id,
+                    DomainEvent.correlation_id == str(learning_episode.id),
+                )
+            )
+            or 0
+        )
+        if linked_event_count != 3 or learning_event_count != 3:
+            raise RuntimeError(
+                "Canonical learning episode must start with three ordered source events"
+            )
+        policies = list(
+            await session.scalars(
+                select(AutomationPolicy).where(
+                    AutomationPolicy.organization_id == organization.id
+                )
+            )
+        )
+        versioned_policy_ids = dict(
+            (
+                await session.execute(
+                    select(PolicyVersion.automation_policy_id, PolicyVersion.id).where(
+                        PolicyVersion.organization_id == organization.id,
+                        PolicyVersion.status == "released",
+                        PolicyVersion.version == 1,
+                    )
+                )
+            ).all()
+        )
+        if any(
+            policy.current_version_id != versioned_policy_ids.get(policy.id)
+            for policy in policies
+        ):
+            raise RuntimeError("Every canonical automation policy must point to released version 1")
         version_count = int(
             await session.scalar(
                 select(func.count(NoteVersion.id)).where(
@@ -452,12 +551,7 @@ async def verify() -> None:
         if session.get_bind().dialect.name == "postgresql":
             trigger_names = set(
                 await session.scalars(
-                    text(
-                        "SELECT tgname FROM pg_trigger "
-                        "WHERE NOT tgisinternal AND tgname IN "
-                        "('trg_guard_signed_note', 'trg_guard_note_versions_append_only', "
-                        "'trg_guard_note_amendments_append_only')"
-                    )
+                    text("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal")
                 )
             )
             required_triggers = {
@@ -465,11 +559,43 @@ async def verify() -> None:
                 "trg_guard_note_versions_append_only",
                 "trg_guard_note_amendments_append_only",
             }
-            if trigger_names != required_triggers:
-                raise RuntimeError("Postgres signed-note immutability triggers are missing")
+            required_triggers.update(
+                f"trg_guard_{table_name}_append_only"
+                for table_name in (
+                    "workflow_events",
+                    "domain_events",
+                    "episode_event_links",
+                    "observation_manifests",
+                    "observation_resources",
+                    "outcome_observations",
+                    "environment_steps",
+                    "reward_components",
+                    "dataset_release_items",
+                )
+            )
+            required_triggers.update(
+                f"trg_guard_{table_name}_finalized"
+                for table_name in (
+                    "episode_definitions",
+                    "episode_instances",
+                    "decision_points",
+                    "action_attempts",
+                    "policy_versions",
+                    "simulation_scenarios",
+                    "environment_runs",
+                    "dataset_releases",
+                )
+            )
+            missing_triggers = required_triggers - trigger_names
+            if missing_triggers:
+                raise RuntimeError(
+                    "Postgres evidence guards are missing: "
+                    + ", ".join(sorted(missing_triggers))
+                )
     print(
         f"Verified {patient_count} synthetic patients, {len(Base.metadata.tables)} tables, "
-        "Sarah's clinical graph, financial reconciliation, tenant edges, and idempotency keys"
+        "Sarah's clinical/learning graphs, policy versions, financial reconciliation, "
+        "tenant edges, and idempotency keys"
     )
 
 

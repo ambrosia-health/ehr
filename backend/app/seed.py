@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -28,13 +29,18 @@ from .models import (
     Consent,
     Conversation,
     Coverage,
+    DatasetRelease,
     DemoScenario,
     DemoTimelineEvent,
     Denial,
     DiagnosticResult,
+    DomainEvent,
     EligibilityCheck,
     Encounter,
     EncounterNote,
+    EpisodeDefinition,
+    EpisodeEventLink,
+    EpisodeInstance,
     Estimate,
     FileRecord,
     IntegrationEvent,
@@ -54,6 +60,7 @@ from .models import (
     PatientBalance,
     PatientContact,
     Payment,
+    PolicyVersion,
     Problem,
     Procedure,
     PromptVersion,
@@ -63,6 +70,7 @@ from .models import (
     Questionnaire,
     QuestionnaireResponse,
     Role,
+    SimulationScenario,
     Specimen,
     StaffProfile,
     Task,
@@ -85,6 +93,10 @@ def sid(key: str) -> uuid.UUID:
 
 def content_hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def structured_hash(value: object) -> str:
+    return content_hash(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str))
 
 
 COHORT_NAMES = [
@@ -131,11 +143,652 @@ COHORT_NAMES = [
 ]
 
 
+async def _ensure_prompt_versions(
+    session: AsyncSession, organization_id: uuid.UUID
+) -> bool:
+    """Add newly shipped prompts without replacing immutable existing versions."""
+
+    existing_keys = set(
+        (
+            await session.execute(
+                select(PromptVersion.capability, PromptVersion.version).where(
+                    PromptVersion.organization_id == organization_id
+                )
+            )
+        ).all()
+    )
+    created = False
+    for capability, schema in AI_OUTPUT_SCHEMAS.items():
+        key = (capability, "2026.1")
+        if key in existing_keys:
+            continue
+        session.add(
+            PromptVersion(
+                id=sid(f"prompt:{capability}:2026.1"),
+                organization_id=organization_id,
+                capability=capability,
+                version="2026.1",
+                template=(
+                    f"Ambrosia {capability} prompt. Use minimum necessary context and "
+                    "return schema-valid JSON."
+                ),
+                output_schema_json=schema.model_json_schema(),
+                active=True,
+            )
+        )
+        created = True
+    return created
+
+
+def _canonical_environment_payloads() -> tuple[dict, dict, dict]:
+    learning_action_types = [
+        "review_intake",
+        "complete_encounter_review",
+        "review_pathology",
+        "notify_patient",
+        "submit_claim",
+        "correct_and_resubmit_claim",
+        "close_episode",
+        "request_missing_information",
+        "escalate",
+    ]
+    reward_components = [
+        "safety",
+        "task_completion",
+        "timeliness",
+        "patient_burden",
+        "staff_burden",
+        "financial_integrity",
+        "policy_compliance",
+        "equity",
+    ]
+    definition_payload = {
+        "slug": "longitudinal-dermatology-operations",
+        "version": 1,
+        "start": {"event": "patient_concern_received"},
+        "terminate": {"stage": "closed"},
+        "actions": learning_action_types,
+        "rewards": reward_components,
+    }
+    initial_state = {
+        "stage": "intake_review",
+        "simulatorTime": (DEMO_NOW - timedelta(days=3)).isoformat(),
+        "supportKind": "simulated",
+        "observation": {
+            "stage": "intake_review",
+            "facts": {
+                "intakeComplete": True,
+                "coverageStatus": "active",
+                "urgentWarningSigns": False,
+            },
+            "outstandingWork": ["review_intake"],
+            "supportKind": "simulated",
+        },
+    }
+    safe_escalation = {
+        "roles": [
+            "environment_agent",
+            "patient",
+            "clinical_staff",
+            "provider",
+            "biller",
+            "mso_owner",
+        ],
+        "nextStage": "manual_handoff",
+        "advanceMinutes": 5,
+        "observation": {
+            "stage": "manual_handoff",
+            "facts": {"humanQueueAccepted": True},
+            "outstandingWork": [],
+            "supportKind": "simulated",
+        },
+        "rewards": {
+            "safety": 1,
+            "task_completion": 0,
+            "timeliness": 0,
+            "policy_compliance": 1,
+        },
+        "supportKind": "simulated",
+        "terminated": True,
+        "terminationReason": "appropriate_human_handoff",
+    }
+    primary_transitions = [
+        (
+            "intake_review",
+            "review_intake",
+            "encounter_review",
+            30,
+            {
+                "intakeReviewed": True,
+                "consentVerified": True,
+                "lesionChangeDocumented": True,
+            },
+            ["complete_encounter_review"],
+            {
+                "safety": 1,
+                "task_completion": 1,
+                "timeliness": 0.5,
+                "policy_compliance": 1,
+                "equity": 0.5,
+            },
+            None,
+        ),
+        (
+            "encounter_review",
+            "complete_encounter_review",
+            "pathology_review",
+            4_320,
+            {
+                "noteSigned": True,
+                "specimenTracked": True,
+                "finalResultAvailable": True,
+            },
+            ["review_pathology"],
+            {
+                "safety": 1,
+                "task_completion": 1,
+                "staff_burden": 0.25,
+                "policy_compliance": 1,
+            },
+            None,
+        ),
+        (
+            "pathology_review",
+            "review_pathology",
+            "patient_notification",
+            20,
+            {"resultReviewed": True, "urgency": "routine"},
+            ["notify_patient"],
+            {
+                "safety": 1,
+                "task_completion": 1,
+                "timeliness": 1,
+                "policy_compliance": 1,
+            },
+            None,
+        ),
+        (
+            "patient_notification",
+            "notify_patient",
+            "claim_submission",
+            15,
+            {"patientNotified": True, "claimValidated": True},
+            ["submit_claim"],
+            {
+                "safety": 1,
+                "task_completion": 1,
+                "patient_burden": 0.5,
+                "policy_compliance": 1,
+            },
+            None,
+        ),
+        (
+            "claim_submission",
+            "submit_claim",
+            "denial_resolution",
+            2_880,
+            {"claimAccepted": True, "denialCategory": "modifier_documentation"},
+            ["correct_and_resubmit_claim"],
+            {
+                "task_completion": 0.5,
+                "financial_integrity": 0.5,
+                "policy_compliance": 1,
+            },
+            None,
+        ),
+        (
+            "denial_resolution",
+            "correct_and_resubmit_claim",
+            "episode_closure",
+            1_440,
+            {"claimPaid": True, "openSafetyTasks": 0},
+            ["close_episode"],
+            {
+                "task_completion": 1,
+                "financial_integrity": 1,
+                "staff_burden": 0.5,
+                "policy_compliance": 1,
+            },
+            None,
+        ),
+        (
+            "episode_closure",
+            "close_episode",
+            "closed",
+            5,
+            {"allRequiredWorkClosed": True},
+            [],
+            {
+                "safety": 1,
+                "task_completion": 1,
+                "financial_integrity": 1,
+                "policy_compliance": 1,
+                "equity": 0.5,
+            },
+            "episode_complete",
+        ),
+    ]
+    transitions: dict[str, dict] = {}
+    for (
+        stage,
+        action,
+        next_stage,
+        advance_minutes,
+        facts,
+        outstanding_work,
+        rewards,
+        termination_reason,
+    ) in primary_transitions:
+        rule = {
+            "roles": ["environment_agent"],
+            "nextStage": next_stage,
+            "advanceMinutes": advance_minutes,
+            "observation": {
+                "stage": next_stage,
+                "facts": facts,
+                "outstandingWork": outstanding_work,
+                "supportKind": "simulated",
+            },
+            "rewards": rewards,
+            "supportKind": "simulated",
+        }
+        if termination_reason:
+            rule.update(
+                {
+                    "terminated": True,
+                    "terminationReason": termination_reason,
+                }
+            )
+        transitions[stage] = {action: rule, "escalate": safe_escalation}
+    transitions["intake_review"]["request_missing_information"] = {
+        "roles": ["environment_agent"],
+        "nextStage": "intake_review",
+        "advanceMinutes": 60,
+        "observation": initial_state["observation"],
+        "rewards": {
+            "safety": 0.25,
+            "task_completion": 0,
+            "timeliness": -0.25,
+            "patient_burden": -0.25,
+            "policy_compliance": 0.5,
+        },
+        "supportKind": "simulated",
+    }
+    simulation_payload = {
+        "initialState": initial_state,
+        "transitions": transitions,
+        "rewards": {"invalidAction": {"policy_compliance": -1, "safety": -1}},
+    }
+    return definition_payload, initial_state, simulation_payload
+
+
+async def _ensure_canonical_learning_graph(
+    session: AsyncSession,
+    *,
+    organization: Organization,
+    owner_user: User,
+    patient_user: User,
+    provider_user: User,
+    patient: Patient,
+    appointment: Appointment,
+    encounter: Encounter,
+) -> bool:
+    """Backfill missing canonical learning records without mutating released evidence."""
+
+    definition_id = sid("episode-definition:longitudinal-dermatology-operations:1")
+    scenario_id = sid("simulation-scenario:longitudinal-dermatology-operations:1")
+    episode_id = sid("episode-instance:sarah-longitudinal-operations")
+    dataset_id = sid("dataset-release:synthetic-trajectory-preview:1")
+    event_ids = {
+        event_type: sid(f"domain-event:sarah:{event_type}")
+        for event_type in (
+            "appointment.booked",
+            "intake.completed",
+            "encounter.started",
+        )
+    }
+    link_ids = {sequence: sid(f"episode-event-link:sarah:{sequence}") for sequence in range(1, 4)}
+
+    with session.no_autoflush:
+        definition = await session.scalar(
+            select(EpisodeDefinition).where(
+                EpisodeDefinition.organization_id == organization.id,
+                EpisodeDefinition.id == definition_id,
+            )
+        )
+        scenario = await session.scalar(
+            select(SimulationScenario).where(
+                SimulationScenario.organization_id == organization.id,
+                SimulationScenario.id == scenario_id,
+            )
+        )
+        episode = await session.scalar(
+            select(EpisodeInstance).where(
+                EpisodeInstance.organization_id == organization.id,
+                EpisodeInstance.id == episode_id,
+            )
+        )
+        dataset = await session.scalar(
+            select(DatasetRelease).where(
+                DatasetRelease.organization_id == organization.id,
+                DatasetRelease.id == dataset_id,
+            )
+        )
+        existing_events = {
+            event.id: event
+            for event in (
+                await session.scalars(
+                    select(DomainEvent).where(
+                        DomainEvent.organization_id == organization.id,
+                        DomainEvent.id.in_(event_ids.values()),
+                    )
+                )
+            ).all()
+        }
+        existing_links = set(
+            (
+                await session.scalars(
+                    select(EpisodeEventLink.id).where(
+                        EpisodeEventLink.organization_id == organization.id,
+                        EpisodeEventLink.id.in_(link_ids.values())
+                    )
+                )
+            ).all()
+        )
+
+    definition_payload, initial_state, simulation_payload = _canonical_environment_payloads()
+    root_records: list = []
+    created = False
+    if definition is None:
+        definition = EpisodeDefinition(
+            id=definition_id,
+            organization_id=organization.id,
+            slug="longitudinal-dermatology-operations",
+            version=1,
+            schema_version=1,
+            episode_type="longitudinal_patient_operations",
+            name="Longitudinal dermatology operations",
+            description=(
+                "Synthetic patient access, clinical care, result closure, communication, and "
+                "revenue-cycle decisions with point-in-time observations."
+            ),
+            start_conditions_json=definition_payload["start"],
+            termination_conditions_json=definition_payload["terminate"],
+            observation_schema_json={
+                "required": ["stage", "facts", "outstandingWork", "supportKind"]
+            },
+            action_schema_json={"actionTypes": definition_payload["actions"]},
+            reward_schema_json={
+                "components": definition_payload["rewards"],
+                "hardViolationsTradeable": False,
+            },
+            max_steps=40,
+            max_duration_seconds=2_592_000,
+            status="released",
+            content_hash=structured_hash(definition_payload),
+            created_by_user_id=owner_user.id,
+            released_at=DEMO_NOW - timedelta(days=1),
+        )
+        session.add(definition)
+        root_records.append(definition)
+        created = True
+
+    event_specs = [
+        (
+            "appointment.booked",
+            "appointment",
+            appointment.id,
+            DEMO_NOW - timedelta(days=3),
+            {"status": "booked", "channel": "digital_intake"},
+        ),
+        (
+            "intake.completed",
+            "questionnaire_response",
+            sid("questionnaire-response:sarah"),
+            DEMO_NOW - timedelta(days=2),
+            {"status": "completed", "urgentWarningSigns": False},
+        ),
+        (
+            "encounter.started",
+            "encounter",
+            encounter.id,
+            encounter.started_at,
+            {"status": "in_progress", "visitType": appointment.visit_type},
+        ),
+    ]
+    events: list[DomainEvent] = []
+    for sequence, (
+        event_type,
+        aggregate_type,
+        aggregate_id,
+        occurred_at,
+        event_payload,
+    ) in enumerate(event_specs, 1):
+        event = existing_events.get(event_ids[event_type])
+        if event is None:
+            event = DomainEvent(
+                id=event_ids[event_type],
+                organization_id=organization.id,
+                event_type=event_type,
+                schema_version=1,
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+                aggregate_sequence=1,
+                patient_id=patient.id,
+                actor_kind="patient" if sequence < 3 else "human",
+                actor_user_id=patient_user.id if sequence < 3 else provider_user.id,
+                actor_role="patient" if sequence < 3 else "provider",
+                request_id=f"seed-learning-{sequence}",
+                correlation_id=str(episode_id),
+                occurred_at=occurred_at,
+                effective_at=occurred_at,
+                recorded_at=occurred_at,
+                payload_json=event_payload,
+                payload_hash=structured_hash(event_payload),
+                sensitivity="synthetic",
+                purpose_of_use="synthetic_evaluation",
+            )
+            session.add(event)
+            root_records.append(event)
+            created = True
+        events.append(event)
+    if root_records:
+        await session.flush(root_records)
+
+    dependent_records: list = []
+    if scenario is None:
+        scenario = SimulationScenario(
+            id=scenario_id,
+            organization_id=organization.id,
+            episode_definition_id=definition.id,
+            slug="longitudinal-dermatology-operations",
+            version=1,
+            schema_version=1,
+            name="Synthetic dermatology service journey",
+            description=(
+                "An isolated deterministic journey from intake review through result closure "
+                "and a simulated claim denial recovery."
+            ),
+            seed=20_260_717,
+            logical_start_at=DEMO_NOW - timedelta(days=3),
+            initial_state_refs_json=[
+                {
+                    "resource_type": "synthetic_case",
+                    "resource_id": str(patient.id),
+                    "resource_version": 1,
+                    "effective_at": (DEMO_NOW - timedelta(days=3)).isoformat(),
+                    "recorded_at": (DEMO_NOW - timedelta(days=3)).isoformat(),
+                    "content_hash": structured_hash(initial_state["observation"]),
+                }
+            ],
+            initial_state_json=initial_state,
+            actor_models_json={
+                "patient": "deterministic-synthetic-patient-2026.1",
+                "payer": "deterministic-synthetic-payer-2026.1",
+                "careTeam": "bounded-role-simulator-2026.1",
+            },
+            transition_rules_json=simulation_payload["transitions"],
+            reward_spec_json=simulation_payload["rewards"],
+            simulator_versions_json={
+                "environment": "ambrosia-healthcare-ops-2026.1",
+                "patient": "deterministic-synthetic-patient-2026.1",
+                "payer": "deterministic-synthetic-payer-2026.1",
+            },
+            fault_plan_json=[
+                {"stage": "claim_submission", "event": "modifier_documentation_denial"}
+            ],
+            synthetic_only=True,
+            status="released",
+            content_hash=structured_hash(simulation_payload),
+            released_at=DEMO_NOW - timedelta(days=1),
+        )
+        session.add(scenario)
+        dependent_records.append(scenario)
+        created = True
+    if episode is None:
+        episode = EpisodeInstance(
+            id=episode_id,
+            organization_id=organization.id,
+            episode_definition_id=definition.id,
+            episode_key=f"patient-journey:{patient.id}",
+            source_kind="synthetic",
+            patient_id=patient.id,
+            seed=20_260_717,
+            status="running",
+            started_at=events[0].occurred_at,
+            start_event_id=events[0].id,
+            metadata_json={"rootType": "patient", "rootId": str(patient.id)},
+        )
+        session.add(episode)
+        dependent_records.append(episode)
+        created = True
+    if dataset is None:
+        dataset_payload = {
+            "name": "ambrosia-synthetic-trajectory-preview",
+            "version": 1,
+            "status": "draft",
+            "containsPhi": False,
+            "intendedUses": ["environment_validation", "offline_evaluation"],
+            "prohibitedUses": [
+                "clinical_reliance",
+                "cross_tenant_training",
+                "reidentification",
+            ],
+        }
+        dataset = DatasetRelease(
+            id=dataset_id,
+            organization_id=organization.id,
+            name=dataset_payload["name"],
+            version=1,
+            schema_version=1,
+            status="draft",
+            intended_uses_json=dataset_payload["intendedUses"],
+            prohibited_uses_json=dataset_payload["prohibitedUses"],
+            legal_basis="synthetic_data_only",
+            cohort_definition_json={"episodeDefinitionId": str(definition.id)},
+            exclusion_criteria_json=[
+                "non_synthetic_records",
+                "unsupported_counterfactuals",
+            ],
+            observation_cutoff_at=DEMO_NOW,
+            outcome_window_days=30,
+            terminology_versions_json={"ICD-10-CM": "2026", "CPT": "2026-demo"},
+            schema_versions_json={"domainEvent": 1, "episode": 1, "environment": 1},
+            deidentification_method="not_applicable_synthetic",
+            split_strategy_json={"unit": "episode", "holdout": "scenario_version"},
+            lineage_uri="internal://unreleased/ambrosia-synthetic-trajectory-preview/v1",
+            lineage_hash=structured_hash({"items": []}),
+            retention_policy_json={"class": "synthetic_fixture"},
+            deletion_policy_json={"method": "organization_scoped_reset"},
+            content_hash=structured_hash(dataset_payload),
+        )
+        session.add(dataset)
+        dependent_records.append(dataset)
+        created = True
+    if dependent_records:
+        await session.flush(dependent_records)
+
+    for sequence, event in enumerate(events, 1):
+        if link_ids[sequence] in existing_links:
+            continue
+        session.add(
+            EpisodeEventLink(
+                id=link_ids[sequence],
+                organization_id=organization.id,
+                episode_instance_id=episode.id,
+                domain_event_id=event.id,
+                sequence=sequence,
+                role="trajectory",
+            )
+        )
+        created = True
+    return created
+
+
 async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[str, uuid.UUID]:
     existing = await session.scalar(select(Organization).where(Organization.slug == DEMO_ORG_SLUG))
     if existing is not None:
         if not existing.demo_mode:
             raise RuntimeError("Refusing to seed over a non-demo organization")
+        prompts_created = await _ensure_prompt_versions(session, existing.id)
+        user_ids = {
+            "owner": sid("user:owner"),
+            "patient": sid("user:patient"),
+            "provider": sid("user:provider"),
+        }
+        existing_users = {
+            user.id: user
+            for user in (
+                await session.scalars(
+                    select(User).where(
+                        User.organization_id == existing.id,
+                        User.id.in_(user_ids.values()),
+                    )
+                )
+            ).all()
+        }
+        sarah = await session.scalar(
+            select(Patient).where(
+                Patient.organization_id == existing.id,
+                Patient.id == sid("patient:sarah"),
+            )
+        )
+        appointment = await session.scalar(
+            select(Appointment).where(
+                Appointment.organization_id == existing.id,
+                Appointment.id == sid("appointment:sarah:hero"),
+            )
+        )
+        encounter = await session.scalar(
+            select(Encounter).where(
+                Encounter.organization_id == existing.id,
+                Encounter.id == sid("encounter:sarah:hero"),
+            )
+        )
+        if (
+            set(existing_users) != set(user_ids.values())
+            or sarah is None
+            or appointment is None
+            or encounter is None
+        ):
+            raise RuntimeError(
+                "Canonical demo users, patient, appointment, or encounter are incomplete"
+            )
+        learning_created = await _ensure_canonical_learning_graph(
+            session,
+            organization=existing,
+            owner_user=existing_users[user_ids["owner"]],
+            patient_user=existing_users[user_ids["patient"]],
+            provider_user=existing_users[user_ids["provider"]],
+            patient=sarah,
+            appointment=appointment,
+            encounter=encounter,
+        )
+        if prompts_created or learning_created:
+            if commit:
+                await session.commit()
+            else:
+                await session.flush()
         return canonical_ids()
 
     role_descriptions = {
@@ -850,18 +1503,7 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
     )
     await session.flush()
 
-    for capability, schema in AI_OUTPUT_SCHEMAS.items():
-        session.add(
-            PromptVersion(
-                id=sid(f"prompt:{capability}:2026.1"),
-                organization_id=org.id,
-                capability=capability,
-                version="2026.1",
-                template=f"Ambrosia {capability} prompt. Use minimum necessary context and return schema-valid JSON.",
-                output_schema_json=schema.model_json_schema(),
-                active=True,
-            )
-        )
+    await _ensure_prompt_versions(session, org.id)
 
     # Predetermined foreign keys intentionally avoid ORM relationships; stage parents explicitly.
     await session.flush()
@@ -1171,8 +1813,6 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
                 requires_approval=True,
             )
         )
-    await session.flush()
-
     sarah_conversation = Conversation(
         id=sid("conversation:sarah:biopsy"),
         organization_id=org.id,
@@ -1230,7 +1870,6 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
             ),
         ]
     )
-    await session.flush()
     session.add_all(
         [
             CommunicationPreference(
@@ -1278,6 +1917,7 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
             ]
         },
         output_json={},
+        next_event_sequence=2,
         started_at=DEMO_NOW + timedelta(hours=1, minutes=45),
     )
     session.add(workflow)
@@ -1397,6 +2037,40 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
     )
     await session.flush()
 
+    automation_policies = list(
+        await session.scalars(
+            select(AutomationPolicy).where(AutomationPolicy.organization_id == org.id)
+        )
+    )
+    policy_versions: list[PolicyVersion] = []
+    for policy in automation_policies:
+        definition = {
+            "conditions": policy.conditions_json,
+            "actions": policy.actions_json,
+            "requiresApproval": policy.requires_approval,
+        }
+        policy_version = PolicyVersion(
+            id=sid(f"policy-version:{policy.id}:1"),
+            organization_id=org.id,
+            automation_policy_id=policy.id,
+            version=1,
+            schema_version=1,
+            conditions_json=policy.conditions_json,
+            actions_json=policy.actions_json,
+            requires_approval=policy.requires_approval,
+            status="released",
+            effective_from=DEMO_NOW - timedelta(days=30),
+            content_hash=structured_hash(definition),
+            created_by_user_id=users["owner"].id,
+            released_at=DEMO_NOW - timedelta(days=30),
+        )
+        policy_versions.append(policy_version)
+    session.add_all(policy_versions)
+    await session.flush(policy_versions)
+    for policy, policy_version in zip(automation_policies, policy_versions, strict=True):
+        policy.current_version_id = policy_version.id
+    await session.flush(automation_policies)
+
     scenario = DemoScenario(
         id=sid("demo-scenario:sarah"),
         organization_id=org.id,
@@ -1434,6 +2108,17 @@ async def seed_database(session: AsyncSession, *, commit: bool = True) -> dict[s
                 payload_json={"patientId": str(sarah.id)},
             )
         )
+
+    await _ensure_canonical_learning_graph(
+        session,
+        organization=org,
+        owner_user=users["owner"],
+        patient_user=users["patient"],
+        provider_user=users["provider"],
+        patient=sarah,
+        appointment=sarah_appt,
+        encounter=sarah_encounter,
+    )
     session.add_all(
         [
             ProvenanceRecord(
@@ -2022,6 +2707,14 @@ def canonical_ids() -> dict[str, uuid.UUID]:
         "sarah_claim_id": sid("claim:sarah"),
         "sarah_conversation_id": sid("conversation:sarah:biopsy"),
         "scenario_id": sid("demo-scenario:sarah"),
+        "learning_episode_definition_id": sid(
+            "episode-definition:longitudinal-dermatology-operations:1"
+        ),
+        "learning_episode_id": sid("episode-instance:sarah-longitudinal-operations"),
+        "learning_scenario_id": sid(
+            "simulation-scenario:longitudinal-dermatology-operations:1"
+        ),
+        "learning_dataset_release_id": sid("dataset-release:synthetic-trajectory-preview:1"),
     }
 
 

@@ -51,6 +51,16 @@ test("keeps the focused clinician workspace connected through canonical routes",
   await expect(page.getByRole("link", { name: "Patients", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
+test("keeps the internal learning console outside clinician navigation", async ({ page }) => {
+  const response = await page.goto("/internal/learning");
+
+  expect(response?.status()).toBe(200);
+  await expect(page.getByText("Ambrosia Learning", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Learning Console access" })).toBeVisible();
+  await expect(page.getByLabel("Presenter code")).toHaveAttribute("type", "password");
+  await expect(page.getByRole("link", { name: "Today", exact: true })).toHaveCount(0);
+});
+
 test("does not retain compatibility routes", async ({ request }) => {
   for (const route of legacyRoutes) {
     const response = await request.get(route, { maxRedirects: 0 });

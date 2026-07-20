@@ -26,7 +26,26 @@ from .ai import (
 from .clock import domain_now
 from .config import Settings, get_settings
 from .database import SessionLocal, create_schema, get_session
+from .environment_agent import choose_environment_action
+from .learning import (
+    create_environment_run,
+    dataset_manifest_catalog,
+    ensure_patient_episode,
+    environment_run_view,
+    episode_catalog,
+    hash_json,
+    prepare_environment_step,
+    record_decision_trajectory,
+    record_outcome,
+    step_environment,
+)
+from .learning_console import (
+    learning_console_bootstrap,
+    learning_console_environment_run_history,
+    learning_console_episode_trajectory,
+)
 from .models import (
+    AIRun,
     Allergy,
     Appeal,
     Appointment,
@@ -45,6 +64,7 @@ from .models import (
     EligibilityCheck,
     Encounter,
     EncounterNote,
+    EnvironmentRun,
     Estimate,
     FileRecord,
     Lesion,
@@ -93,6 +113,9 @@ from .schemas import (
     ConversationMessageRequest,
     DemoSessionRequest,
     DraftMessageRequest,
+    EnvironmentModelStepRequest,
+    EnvironmentRunRequest,
+    EnvironmentStepRequest,
     LesionObservationRequest,
     NoteUpdateRequest,
     PathologyReviewRequest,
@@ -131,6 +154,7 @@ _RFC3339_DATETIME = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?$"
 )
 MAX_API_REQUEST_BYTES = 256 * 1024
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 def _rfc3339(value: datetime) -> str:
@@ -190,7 +214,12 @@ app.add_middleware(
 
 @app.middleware("http")
 async def secure_and_observe_requests(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    supplied_request_id = request.headers.get("X-Request-ID")
+    request_id = (
+        supplied_request_id
+        if supplied_request_id and _SAFE_REQUEST_ID.fullmatch(supplied_request_id)
+        else str(uuid.uuid4())
+    )
     request.state.request_id = request_id
     metrics, metrics_token = begin_request(request_id)
     response: Response | None = None
@@ -713,6 +742,24 @@ async def composite_intake_submission(
             Appointment.organization_id == principal.organization_id,
         )
     )
+    appointment_before_hash = (
+        hash_json(
+            {
+                "providerId": appointment.provider_id,
+                "locationId": appointment.location_id,
+                "startsAt": appointment.starts_at,
+                "durationMinutes": appointment.duration_minutes,
+                "status": appointment.status,
+                "readinessStatus": appointment.readiness_status,
+            }
+        )
+        if appointment is not None
+        else None
+    )
+    appointment_before_recorded_at = (
+        appointment.updated_at.isoformat() if appointment is not None else None
+    )
+    offered_slot_ids: list[uuid.UUID] = []
     selected_slot = None
     if appointment is not None:
         existing_slot_id = availability_slot_id(
@@ -729,13 +776,12 @@ async def composite_intake_submission(
                 "starts_at": appointment.starts_at,
                 "duration_minutes": appointment.duration_minutes,
             }
+            offered_slot_ids.append(existing_slot_id)
     if selected_slot is None:
+        offered_slots = await get_availability(session, principal.organization_id)
+        offered_slot_ids = [slot["id"] for slot in offered_slots]
         selected_slot = next(
-            (
-                slot
-                for slot in await get_availability(session, principal.organization_id)
-                if slot["id"] == payload.appointment_slot
-            ),
+            (slot for slot in offered_slots if slot["id"] == payload.appointment_slot),
             None,
         )
     if selected_slot is None:
@@ -850,6 +896,19 @@ async def composite_intake_submission(
             Coverage.status == "active",
         )
     )
+    coverage_before_hash = (
+        hash_json(
+            {
+                "payerName": coverage.payer_name,
+                "planName": coverage.plan_name,
+                "memberId": coverage.member_id,
+                "status": coverage.status,
+            }
+        )
+        if coverage is not None
+        else None
+    )
+    coverage_before_recorded_at = coverage.updated_at.isoformat() if coverage is not None else None
     if coverage is None:
         coverage = Coverage(
             organization_id=principal.organization_id,
@@ -1147,6 +1206,145 @@ async def composite_intake_submission(
         )
     await set_demo_chapter(session, principal.organization_id, "command_center")
     try:
+        # Persist the care records first, then append their learning-plane references in
+        # the same transaction. Observation hashes describe the state visible before
+        # the patient's submission; raw intake answers never enter the learning tables.
+        await session.flush()
+        episode = await ensure_patient_episode(
+            session,
+            organization_id=principal.organization_id,
+            patient_id=patient.id,
+            started_at=now,
+        )
+        if episode is not None:
+            intake_actor_role = next(
+                (
+                    role
+                    for role in ("patient", "provider", "clinical_staff")
+                    if role in principal.roles
+                ),
+                "unknown",
+            )
+            submission_hash = hash_json(payload.model_dump(mode="json"))
+            decision_identity = hash_json(
+                {
+                    "submissionHash": submission_hash,
+                    "selectedSlotId": selected_slot["id"],
+                    "eligibilityCheckId": eligibility.id,
+                    "estimateId": estimate.id,
+                }
+            )
+            idempotency_key = f"intake-submit:{response_record.id}:{decision_identity}"
+            observation_resources = [
+                {
+                    "resource_type": "questionnaire",
+                    "resource_id": questionnaire.id,
+                    "resource_version": 1,
+                    "effective_at": questionnaire.created_at.isoformat(),
+                    "recorded_at": questionnaire.updated_at.isoformat(),
+                    "content_hash": hash_json(
+                        {
+                            "slug": questionnaire.slug,
+                            "version": questionnaire.version,
+                            "schema": questionnaire.schema_json,
+                            "isActive": questionnaire.is_active,
+                        }
+                    ),
+                }
+            ]
+            if appointment_before_hash is not None:
+                observation_resources.append(
+                    {
+                        "resource_type": "appointment",
+                        "resource_id": appointment.id,
+                        "resource_version": 1,
+                        "effective_at": appointment_before_recorded_at,
+                        "recorded_at": appointment_before_recorded_at,
+                        "content_hash": appointment_before_hash,
+                    }
+                )
+            if coverage_before_hash is not None:
+                observation_resources.append(
+                    {
+                        "resource_type": "coverage",
+                        "resource_id": coverage.id,
+                        "resource_version": 1,
+                        "effective_at": coverage_before_recorded_at,
+                        "recorded_at": coverage_before_recorded_at,
+                        "content_hash": coverage_before_hash,
+                    }
+                )
+            event, decision, action = await record_decision_trajectory(
+                session,
+                organization_id=principal.organization_id,
+                episode=episode,
+                decision_type="patient_intake_submission",
+                available_actions=[
+                    f"book_appointment_slot:{slot_id}"
+                    for slot_id in dict.fromkeys(offered_slot_ids)
+                ],
+                selected_action=f"book_appointment_slot:{selected_slot['id']}",
+                observation_resources=observation_resources,
+                actor_kind="patient" if intake_actor_role == "patient" else "human",
+                actor_user_id=principal.user_id,
+                actor_role=intake_actor_role,
+                occurred_at=now,
+                aggregate_type="intake_submission",
+                aggregate_id=uuid.uuid5(
+                    response_record.id,
+                    f"learning-decision:{decision_identity}",
+                ),
+                aggregate_sequence=1,
+                event_type="intake.submission_completed",
+                event_payload={
+                    "questionnaireResponseId": str(response_record.id),
+                    "appointmentId": str(appointment.id),
+                    "selectedSlotId": str(selected_slot["id"]),
+                    "submissionHash": submission_hash,
+                    "urgentSignCount": len(actionable_urgent_signs),
+                    "imageReferenced": file_record is not None,
+                },
+                idempotency_key=idempotency_key,
+                patient_id=patient.id,
+                action_arguments={
+                    "selectedSlotId": str(selected_slot["id"]),
+                    "providerId": str(provider.id),
+                    "locationId": str(location.id),
+                    "startsAt": selected_slot["starts_at"].isoformat(),
+                    "durationMinutes": selected_slot["duration_minutes"],
+                    "submissionHash": submission_hash,
+                    "consentsAccepted": consent_types,
+                },
+                expected_target_type="questionnaire_response",
+                expected_target_id=response_record.id,
+            )
+            await record_outcome(
+                session,
+                organization_id=principal.organization_id,
+                episode=episode,
+                outcome_type="intake_submission_accepted",
+                value={
+                    "accepted": True,
+                    "appointmentId": str(appointment.id),
+                    "questionnaireResponseId": str(response_record.id),
+                    "eligibilityCheckId": str(eligibility.id),
+                    "estimateId": str(estimate.id),
+                    "urgentTriageRequired": bool(actionable_urgent_signs),
+                    "triageTaskId": (
+                        str(triage_task.id) if actionable_urgent_signs and triage_task else None
+                    ),
+                    "triageNotificationId": (
+                        str(triage_notification.id)
+                        if actionable_urgent_signs and triage_notification
+                        else None
+                    ),
+                },
+                provenance_kind="observed",
+                observed_at=now,
+                decision=decision,
+                action=action,
+                source_event=event,
+            )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -1650,6 +1848,18 @@ async def review_pathology_result(
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Pathology result not found")
+    result_before_hash = hash_json(
+        {
+            "status": result.status,
+            "diagnosis": result.diagnosis,
+            "narrative": result.narrative,
+            "summary": result.summary,
+            "resultedAt": result.resulted_at,
+            "reviewedAt": result.reviewed_at,
+            "patientNotifiedAt": result.patient_notified_at,
+        }
+    )
+    result_before_recorded_at = result.updated_at.isoformat()
     assigned_provider = await session.scalar(
         select(Provider).where(
             Provider.id == result.clinician_id,
@@ -1670,6 +1880,14 @@ async def review_pathology_result(
     )
     if order is None:
         raise HTTPException(status_code=409, detail="Pathology result has no valid source order")
+    order_observation_hash = hash_json(
+        {
+            "orderType": order.order_type,
+            "code": order.code,
+            "status": order.status,
+            "orderedAt": order.ordered_at,
+        }
+    )
     now = await domain_now(session, principal.organization_id)
     if result.reviewed_at is None:
         result.reviewed_at = now
@@ -1681,6 +1899,23 @@ async def review_pathology_result(
             Conversation.organization_id == principal.organization_id,
         )
     )
+    conversation_observation_hash = (
+        hash_json(
+            {
+                "channel": conversation.channel,
+                "status": conversation.status,
+                "assignedUserId": conversation.assigned_user_id,
+                "lastMessageAt": conversation.last_message_at,
+            }
+        )
+        if conversation is not None
+        else None
+    )
+    conversation_observation_recorded_at = (
+        conversation.updated_at.isoformat() if conversation is not None else None
+    )
+    draft = None
+    draft_observation = None
     sent_message = None
     if payload.notify_patient:
         if conversation is None:
@@ -1696,6 +1931,18 @@ async def review_pathology_result(
                 MessageDraft.status.in_(["proposed", "approved"]),
             )
         )
+        if draft is not None:
+            draft_observation = {
+                "recorded_at": draft.updated_at.isoformat(),
+                "content_hash": hash_json(
+                    {
+                        "body": draft.body,
+                        "status": draft.status,
+                        "confidence": draft.confidence,
+                        "aiRunId": draft.ai_run_id,
+                    }
+                ),
+            }
         if draft is None and not payload.patient_message:
             raise HTTPException(
                 status_code=409,
@@ -1764,6 +2011,36 @@ async def review_pathology_result(
             Task.status != "completed",
         )
     )
+    review_task_observation = (
+        {
+            "recorded_at": review_task.updated_at.isoformat(),
+            "content_hash": hash_json(
+                {
+                    "taskType": review_task.task_type,
+                    "priority": review_task.priority,
+                    "status": review_task.status,
+                    "dueAt": review_task.due_at,
+                }
+            ),
+        }
+        if review_task is not None
+        else None
+    )
+    closure_task_observation = (
+        {
+            "recorded_at": closure_task.updated_at.isoformat(),
+            "content_hash": hash_json(
+                {
+                    "taskType": closure_task.task_type,
+                    "priority": closure_task.priority,
+                    "status": closure_task.status,
+                    "dueAt": closure_task.due_at,
+                }
+            ),
+        }
+        if closure_task is not None
+        else None
+    )
     if review_task:
         review_task.status = "completed"
         review_task.completed_at = now
@@ -1827,6 +2104,166 @@ async def review_pathology_result(
         )
         session.add(audit)
     await session.flush()
+    episode = await ensure_patient_episode(
+        session,
+        organization_id=principal.organization_id,
+        patient_id=result.patient_id,
+        started_at=result.resulted_at,
+    )
+    if episode is not None:
+        executed_message_hash = (
+            hash_json({"body": sent_message.body}) if sent_message is not None else None
+        )
+        disposition_hash = hash_json({"disposition": payload.disposition})
+        selected_action = "review_pathology"
+        if payload.notify_patient:
+            selected_action += "_and_notify_patient"
+        if payload.create_followup:
+            selected_action += "_and_create_followup"
+        decision_identity = hash_json(
+            {
+                "selectedAction": selected_action,
+                "dispositionHash": disposition_hash,
+                "executedMessageHash": executed_message_hash,
+            }
+        )
+        idempotency_key = f"pathology-review:{result.id}:{decision_identity}"
+        observation_resources = [
+            {
+                "resource_type": "diagnostic_result",
+                "resource_id": result.id,
+                "resource_version": 1,
+                "effective_at": result.resulted_at.isoformat(),
+                "recorded_at": result_before_recorded_at,
+                "content_hash": result_before_hash,
+            },
+            {
+                "resource_type": "order",
+                "resource_id": order.id,
+                "resource_version": 1,
+                "effective_at": order.ordered_at.isoformat(),
+                "recorded_at": order.updated_at.isoformat(),
+                "content_hash": order_observation_hash,
+            },
+        ]
+        if conversation is not None and conversation_observation_hash is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "conversation",
+                    "resource_id": conversation.id,
+                    "resource_version": 1,
+                    "effective_at": conversation.created_at.isoformat(),
+                    "recorded_at": conversation_observation_recorded_at,
+                    "content_hash": conversation_observation_hash,
+                }
+            )
+        if draft is not None and draft_observation is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "message_draft",
+                    "resource_id": draft.id,
+                    "resource_version": 1,
+                    "effective_at": draft.created_at.isoformat(),
+                    "recorded_at": draft_observation["recorded_at"],
+                    "content_hash": draft_observation["content_hash"],
+                }
+            )
+        if review_task is not None and review_task_observation is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "task",
+                    "resource_id": review_task.id,
+                    "resource_version": 1,
+                    "effective_at": review_task_observation["recorded_at"],
+                    "recorded_at": review_task_observation["recorded_at"],
+                    "content_hash": review_task_observation["content_hash"],
+                }
+            )
+        if closure_task is not None and closure_task_observation is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "task",
+                    "resource_id": closure_task.id,
+                    "resource_version": 1,
+                    "effective_at": closure_task_observation["recorded_at"],
+                    "recorded_at": closure_task_observation["recorded_at"],
+                    "content_hash": closure_task_observation["content_hash"],
+                }
+            )
+        event, decision, action = await record_decision_trajectory(
+            session,
+            organization_id=principal.organization_id,
+            episode=episode,
+            decision_type="pathology_result_review",
+            available_actions=[
+                "review_pathology",
+                "review_pathology_and_create_followup",
+                "review_pathology_and_notify_patient",
+                "review_pathology_and_notify_patient_and_create_followup",
+            ],
+            selected_action=selected_action,
+            observation_resources=observation_resources,
+            actor_kind="human",
+            actor_user_id=principal.user_id,
+            actor_role="provider",
+            occurred_at=now,
+            aggregate_type="pathology_review",
+            aggregate_id=uuid.uuid5(result.id, f"learning-decision:{decision_identity}"),
+            aggregate_sequence=1,
+            event_type="pathology.review_completed",
+            event_payload={
+                "resultId": str(result.id),
+                "orderId": str(order.id),
+                "selectedAction": selected_action,
+                "dispositionHash": disposition_hash,
+                "executedMessageHash": executed_message_hash,
+            },
+            idempotency_key=idempotency_key,
+            patient_id=result.patient_id,
+            action_arguments={
+                "notifyPatient": payload.notify_patient,
+                "createFollowup": payload.create_followup,
+                "dispositionHash": disposition_hash,
+                "messageSource": (
+                    "ai_draft"
+                    if payload.notify_patient and draft is not None
+                    else "explicit_reviewed_body"
+                    if payload.notify_patient
+                    else None
+                ),
+                "executedMessageHash": executed_message_hash,
+            },
+            human_edit_diff=(
+                {
+                    "edited": sent_message.body.strip() != draft.body.strip(),
+                    "proposedHash": hash_json({"body": draft.body}),
+                    "executedHash": executed_message_hash,
+                }
+                if sent_message is not None and draft is not None
+                else None
+            ),
+            expected_target_type="diagnostic_result",
+            expected_target_id=result.id,
+        )
+        await record_outcome(
+            session,
+            organization_id=principal.organization_id,
+            episode=episode,
+            outcome_type="pathology_review_recorded",
+            value={
+                "reviewRecorded": True,
+                "patientNotificationRequested": payload.notify_patient,
+                "notificationId": str(sent_message.id) if sent_message else None,
+                "notificationStatus": sent_message.status if sent_message else None,
+                "followupRequested": payload.create_followup,
+                "followupId": str(followup.id) if followup else None,
+            },
+            provenance_kind="observed",
+            observed_at=now,
+            decision=decision,
+            action=action,
+            source_event=event,
+        )
     await session.commit()
     return {
         "result_id": result.id,
@@ -2262,6 +2699,18 @@ async def correct_and_resubmit(
     )
     if claim is None:
         raise HTTPException(status_code=404, detail="Claim not found")
+    claim_observation_hash = hash_json(
+        {
+            "status": claim.status,
+            "totalCharge": claim.total_charge,
+            "allowedAmount": claim.allowed_amount,
+            "paidAmount": claim.paid_amount,
+            "patientResponsibility": claim.patient_responsibility,
+            "submittedAt": claim.submitted_at,
+            "adjudicatedAt": claim.adjudicated_at,
+        }
+    )
+    claim_observation_recorded_at = claim.updated_at.isoformat()
     denial = await session.scalar(
         select(Denial).where(
             Denial.claim_id == claim.id,
@@ -2271,6 +2720,17 @@ async def correct_and_resubmit(
     )
     if denial is None:
         raise HTTPException(status_code=409, detail="Claim has no open denial")
+    denial_observation_hash = hash_json(
+        {
+            "category": denial.category,
+            "reasonCode": denial.reason_code,
+            "reason": denial.reason,
+            "deniedAmount": denial.denied_amount,
+            "status": denial.status,
+            "deniedAt": denial.denied_at,
+        }
+    )
+    denial_observation_recorded_at = denial.updated_at.isoformat()
     task_query = select(Task).where(
         Task.organization_id == principal.organization_id,
         Task.patient_id == claim.patient_id,
@@ -2286,11 +2746,43 @@ async def correct_and_resubmit(
         raise HTTPException(
             status_code=422, detail="Source denial task is not valid for this claim"
         )
+    task_observation = (
+        {
+            "recorded_at": task.updated_at.isoformat(),
+            "content_hash": hash_json(
+                {
+                    "taskType": task.task_type,
+                    "priority": task.priority,
+                    "status": task.status,
+                    "dueAt": task.due_at,
+                }
+            ),
+        }
+        if task is not None
+        else None
+    )
     appeal = await session.scalar(
         select(Appeal).where(
             Appeal.denial_id == denial.id,
             Appeal.organization_id == principal.organization_id,
         )
+    )
+    appeal_observation = (
+        {
+            "recorded_at": appeal.updated_at.isoformat(),
+            "content_hash": hash_json(
+                {
+                    "status": appeal.status,
+                    "appealText": appeal.appeal_text,
+                    "evidence": appeal.evidence_json,
+                    "submittedAt": appeal.submitted_at,
+                }
+            ),
+            "body_hash": hash_json({"body": appeal.appeal_text}),
+            "body": appeal.appeal_text,
+        }
+        if appeal is not None
+        else None
     )
     now = await domain_now(session, principal.organization_id)
     denial_action = await session.scalar(
@@ -2303,6 +2795,50 @@ async def correct_and_resubmit(
     )
     if denial_action is None or denial_action.status not in {"proposed", "approved"}:
         raise HTTPException(status_code=409, detail="Denial correction lacks an approvable action")
+    denial_action_payload_hash = denial_action.payload_hash or hash_json(
+        denial_action.payload_json
+    )
+    denial_action.payload_hash = denial_action_payload_hash
+    denial_action_observation_hash = hash_json(
+        {
+            "actionType": denial_action.action_type,
+            "payload": denial_action.payload_json,
+            "rationale": denial_action.rationale,
+            "status": denial_action.status,
+            "requiresApproval": denial_action.requires_approval,
+            "proposalVersion": denial_action.proposal_version,
+            "payloadHash": denial_action_payload_hash,
+        }
+    )
+    denial_action_recorded_at = denial_action.updated_at.isoformat()
+    lines = (
+        await session.scalars(
+            select(ClaimLine)
+            .where(
+                ClaimLine.claim_id == claim.id,
+                ClaimLine.organization_id == principal.organization_id,
+            )
+            .order_by(ClaimLine.line_number)
+        )
+    ).all()
+    line_observations = [
+        {
+            "id": line.id,
+            "recorded_at": line.updated_at.isoformat(),
+            "content_hash": hash_json(
+                {
+                    "lineNumber": line.line_number,
+                    "procedureCode": line.procedure_code,
+                    "diagnosisCodes": line.diagnosis_codes,
+                    "units": line.units,
+                    "chargeAmount": line.charge_amount,
+                    "allowedAmount": line.allowed_amount,
+                    "paidAmount": line.paid_amount,
+                }
+            ),
+        }
+        for line in lines
+    ]
     existing_approval = await session.scalar(
         select(Approval).where(
             Approval.organization_id == principal.organization_id,
@@ -2310,6 +2846,8 @@ async def correct_and_resubmit(
             Approval.decision == "approved",
         )
     )
+    requested_appeal_hash = hash_json({"body": payload.appeal_body})
+    requested_correction_hash = hash_json({"correction": payload.correction})
     if existing_approval is None:
         session.add(
             Approval(
@@ -2320,6 +2858,18 @@ async def correct_and_resubmit(
                 decision="approved",
                 comment=payload.correction,
                 decided_at=now,
+                proposed_action_version=denial_action.proposal_version,
+                expected_target_version=denial_action.expected_target_version,
+                reviewer_role="biller",
+                edit_diff_json={
+                    "proposedAppealHash": (
+                        appeal_observation["body_hash"]
+                        if appeal_observation is not None
+                        else None
+                    ),
+                    "executedAppealHash": requested_appeal_hash,
+                    "correctionHash": requested_correction_hash,
+                },
             )
         )
     denial_action.status = "approved"
@@ -2340,16 +2890,6 @@ async def correct_and_resubmit(
         appeal.appeal_text = payload.appeal_body
         appeal.status = "submitted"
         appeal.submitted_at = now
-    lines = (
-        await session.scalars(
-            select(ClaimLine)
-            .where(
-                ClaimLine.claim_id == claim.id,
-                ClaimLine.organization_id == principal.organization_id,
-            )
-            .order_by(ClaimLine.line_number)
-        )
-    ).all()
     evaluation_line = next((line for line in lines if line.procedure_code.startswith("99")), None)
     if evaluation_line and not evaluation_line.procedure_code.endswith("-25"):
         evaluation_line.procedure_code = f"{evaluation_line.procedure_code}-25"
@@ -2397,6 +2937,157 @@ async def correct_and_resubmit(
     )
     await set_demo_chapter(session, principal.organization_id, "rcm")
     await session.flush()
+    episode = await ensure_patient_episode(
+        session,
+        organization_id=principal.organization_id,
+        patient_id=claim.patient_id,
+        started_at=claim.created_at,
+    )
+    if episode is not None:
+        executed_appeal_hash = requested_appeal_hash
+        correction_hash = requested_correction_hash
+        decision_identity = hash_json(
+            {
+                "claimId": claim.id,
+                "denialId": denial.id,
+                "proposedActionId": denial_action.id,
+                "proposalVersion": denial_action.proposal_version,
+                "sourceTaskId": task.id if task else None,
+                "executedAppealHash": executed_appeal_hash,
+                "correctionHash": correction_hash,
+                "modifier": "25",
+            }
+        )
+        idempotency_key = f"claim-resubmit:{claim.id}:{decision_identity}"
+        observation_resources = [
+            {
+                "resource_type": "claim",
+                "resource_id": claim.id,
+                "resource_version": 1,
+                "effective_at": claim_observation_recorded_at,
+                "recorded_at": claim_observation_recorded_at,
+                "content_hash": claim_observation_hash,
+            },
+            {
+                "resource_type": "denial",
+                "resource_id": denial.id,
+                "resource_version": 1,
+                "effective_at": denial.denied_at.isoformat(),
+                "recorded_at": denial_observation_recorded_at,
+                "content_hash": denial_observation_hash,
+            },
+            {
+                "resource_type": "proposed_action",
+                "resource_id": denial_action.id,
+                "resource_version": denial_action.proposal_version,
+                "effective_at": denial_action.created_at.isoformat(),
+                "recorded_at": denial_action_recorded_at,
+                "content_hash": denial_action_observation_hash,
+            },
+        ]
+        if task is not None and task_observation is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "task",
+                    "resource_id": task.id,
+                    "resource_version": 1,
+                    "effective_at": task_observation["recorded_at"],
+                    "recorded_at": task_observation["recorded_at"],
+                    "content_hash": task_observation["content_hash"],
+                }
+            )
+        if appeal_observation is not None:
+            observation_resources.append(
+                {
+                    "resource_type": "appeal",
+                    "resource_id": appeal.id,
+                    "resource_version": 1,
+                    "effective_at": appeal_observation["recorded_at"],
+                    "recorded_at": appeal_observation["recorded_at"],
+                    "content_hash": appeal_observation["content_hash"],
+                }
+            )
+        observation_resources.extend(
+            {
+                "resource_type": "claim_line",
+                "resource_id": line_observation["id"],
+                "resource_version": 1,
+                "effective_at": line_observation["recorded_at"],
+                "recorded_at": line_observation["recorded_at"],
+                "content_hash": line_observation["content_hash"],
+            }
+            for line_observation in line_observations
+        )
+        event, decision, action = await record_decision_trajectory(
+            session,
+            organization_id=principal.organization_id,
+            episode=episode,
+            decision_type="denial_correction_and_resubmission",
+            available_actions=["correct_and_resubmit_claim"],
+            selected_action="correct_and_resubmit_claim",
+            observation_resources=observation_resources,
+            actor_kind="human",
+            actor_user_id=principal.user_id,
+            actor_role="biller",
+            occurred_at=now,
+            aggregate_type="claim_resubmission",
+            aggregate_id=uuid.uuid5(claim.id, f"learning-decision:{decision_identity}"),
+            aggregate_sequence=1,
+            event_type="claim.corrected_and_resubmitted",
+            event_payload={
+                "claimId": str(claim.id),
+                "denialId": str(denial.id),
+                "proposedActionId": str(denial_action.id),
+                "proposalVersion": denial_action.proposal_version,
+                "sourceTaskId": str(task.id) if task else None,
+                "executedAppealHash": executed_appeal_hash,
+                "correctionHash": correction_hash,
+                "modifier": "25",
+            },
+            idempotency_key=idempotency_key,
+            patient_id=claim.patient_id,
+            action_arguments={
+                "sourceTaskId": str(task.id) if task else None,
+                "executedAppealHash": executed_appeal_hash,
+                "correctionHash": correction_hash,
+                "modifier": "25",
+                "evidenceTypes": appeal.evidence_json,
+            },
+            human_edit_diff={
+                "appealEdited": (
+                    appeal_observation is not None
+                    and payload.appeal_body.strip() != appeal_observation["body"].strip()
+                ),
+                "proposedAppealHash": (
+                    appeal_observation["body_hash"] if appeal_observation is not None else None
+                ),
+                "executedAppealHash": executed_appeal_hash,
+                "correctionHash": correction_hash,
+            },
+            displayed_proposal_id=denial_action.id,
+            expected_target_type="proposed_action",
+            expected_target_id=denial_action.id,
+            expected_target_version=denial_action.proposal_version,
+        )
+        await record_outcome(
+            session,
+            organization_id=principal.organization_id,
+            episode=episode,
+            outcome_type="claim_resubmission_recorded",
+            value={
+                "claimEventId": str(correction_event.id),
+                "claimStatus": claim.status,
+                "denialStatus": denial.status,
+                "appealStatus": appeal.status,
+                "modifiedClaimLineId": str(evaluation_line.id) if evaluation_line else None,
+                "sourceTaskCompleted": task is not None,
+            },
+            provenance_kind="observed",
+            observed_at=now,
+            decision=decision,
+            action=action,
+            source_event=event,
+        )
     await session.commit()
     return {
         "claim_id": claim.id,
@@ -2532,6 +3223,223 @@ async def presenter_health(
         "database": "sqlite_local" if runtime.is_sqlite else "neon_postgres",
         "ai_provider": ("openai" if runtime.openai_api_key else "local_deterministic_fallback"),
     }
+
+
+@app.get("/api/demo/learning/episodes")
+async def learning_episodes(
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    """Return the bounded catalog of released synthetic episode definitions."""
+
+    return {"episodes": await episode_catalog(session, principal.organization_id)}
+
+
+@app.get("/api/demo/learning/console")
+async def learning_console(
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    """Return one bounded, privacy-safe feed for the internal learning console."""
+
+    payload = await learning_console_bootstrap(
+        session,
+        organization_id=principal.organization_id,
+    )
+    payload["episode_definitions"] = await episode_catalog(
+        session, principal.organization_id
+    )
+    return payload
+
+
+@app.get("/api/demo/learning/episodes/{episode_id}/trajectory")
+async def learning_episode_trajectory(
+    episode_id: uuid.UUID,
+    principal: PresenterPrincipal,
+    session: Session,
+    offset: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    return await learning_console_episode_trajectory(
+        session,
+        organization_id=principal.organization_id,
+        episode_id=episode_id,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@app.post("/api/demo/learning/environment-runs")
+async def create_learning_environment_run(
+    payload: EnvironmentRunRequest,
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    async def create_and_read() -> dict[str, Any]:
+        run = await create_environment_run(
+            session,
+            organization_id=principal.organization_id,
+            requested_by_user_id=principal.presenter_actor_id or principal.user_id,
+            episode_definition_id=payload.episode_definition_id,
+            actor_role=payload.actor_role,
+            seed=payload.seed,
+            idempotency_key=payload.idempotency_key,
+        )
+        await session.flush()
+        response = await environment_run_view(
+            session,
+            organization_id=principal.organization_id,
+            run_id=run.id,
+        )
+        await session.commit()
+        return response
+
+    try:
+        return await create_and_read()
+    except IntegrityError:
+        # A concurrent request can win the deterministic run key between the
+        # lookup and insert. After rollback, the same input resolves that run;
+        # different input still receives the helper's idempotency conflict.
+        await session.rollback()
+        return await create_and_read()
+
+
+@app.get("/api/demo/learning/environment-runs/{run_id}")
+async def learning_environment_run(
+    run_id: uuid.UUID,
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    return await environment_run_view(
+        session,
+        organization_id=principal.organization_id,
+        run_id=run_id,
+    )
+
+
+@app.get("/api/demo/learning/environment-runs/{run_id}/history")
+async def learning_environment_run_history(
+    run_id: uuid.UUID,
+    principal: PresenterPrincipal,
+    session: Session,
+    after_step: int = 0,
+    limit: int = 50,
+) -> dict[str, Any]:
+    return await learning_console_environment_run_history(
+        session,
+        organization_id=principal.organization_id,
+        run_id=run_id,
+        after_step=after_step,
+        limit=limit,
+    )
+
+
+@app.post("/api/demo/learning/environment-runs/{run_id}/steps")
+async def step_learning_environment_run(
+    run_id: uuid.UUID,
+    payload: EnvironmentStepRequest,
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    response = await step_environment(
+        session,
+        organization_id=principal.organization_id,
+        requested_by_user_id=principal.presenter_actor_id or principal.user_id,
+        run_id=run_id,
+        expected_sequence=payload.expected_sequence,
+        idempotency_key=payload.idempotency_key,
+        action_type=payload.action.type,
+        reason_code=payload.action.reason_code,
+    )
+    await session.commit()
+    return response
+
+
+@app.post("/api/demo/learning/environment-runs/{run_id}/model-step")
+async def model_step_learning_environment_run(
+    run_id: uuid.UUID,
+    payload: EnvironmentModelStepRequest,
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    """Let the configured model select one action in an isolated synthetic run."""
+
+    step_key = f"model:{payload.idempotency_key}"
+    existing_action = await prepare_environment_step(
+        session,
+        organization_id=principal.organization_id,
+        run_id=run_id,
+        expected_sequence=payload.expected_sequence,
+        idempotency_key=step_key,
+    )
+    if existing_action is not None:
+        if existing_action.ai_run_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Model-step idempotency key belongs to a non-model action",
+            )
+        ai_run = await session.scalar(
+            select(AIRun).where(
+                AIRun.organization_id == principal.organization_id,
+                AIRun.id == existing_action.ai_run_id,
+            )
+        )
+        if ai_run is None:
+            raise RuntimeError("Model-step provenance is incomplete")
+        action_type = existing_action.action_type
+        reason_code = existing_action.arguments_json.get("reasonCode")
+    else:
+        action, ai_run = await choose_environment_action(
+            session,
+            organization_id=principal.organization_id,
+            requested_by_user_id=principal.presenter_actor_id or principal.user_id,
+            run_id=run_id,
+        )
+        action_type = action.type
+        reason_code = action.reason_code
+        environment_run = await session.scalar(
+            select(EnvironmentRun).where(
+                EnvironmentRun.organization_id == principal.organization_id,
+                EnvironmentRun.id == run_id,
+            )
+        )
+        if environment_run is None:
+            raise RuntimeError("Environment run disappeared during model selection")
+        environment_run.agent_kind = "model_policy"
+        environment_run.agent_model = ai_run.model
+        environment_run.prompt_version_id = ai_run.prompt_version_id
+
+    response = await step_environment(
+        session,
+        organization_id=principal.organization_id,
+        requested_by_user_id=principal.presenter_actor_id or principal.user_id,
+        run_id=run_id,
+        expected_sequence=payload.expected_sequence,
+        idempotency_key=step_key,
+        action_type=action_type,
+        reason_code=reason_code,
+        ai_run_id=ai_run.id,
+    )
+    await session.commit()
+    response["model"] = {
+        "aiRunId": ai_run.id,
+        "provider": ai_run.provider,
+        "model": ai_run.model,
+        "fallbackUsed": ai_run.fallback_used,
+        "latencyMs": ai_run.latency_ms,
+        "errorCode": "model_fallback" if ai_run.fallback_used else None,
+    }
+    return response
+
+
+@app.get("/api/demo/learning/dataset-manifests")
+async def learning_dataset_manifests(
+    principal: PresenterPrincipal,
+    session: Session,
+) -> dict[str, Any]:
+    """Expose release metadata, never dataset storage or membership details."""
+
+    return {"datasets": await dataset_manifest_catalog(session, principal.organization_id)}
 
 
 @app.post("/api/demo/reset")

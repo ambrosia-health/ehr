@@ -188,6 +188,86 @@ class TriggerRequest(APIModel):
     entity_id: str | None = Field(default=None, max_length=64)
 
 
+EnvironmentActionType = Literal[
+    "review_intake",
+    "complete_encounter_review",
+    "review_pathology",
+    "notify_patient",
+    "submit_claim",
+    "correct_and_resubmit_claim",
+    "close_episode",
+    "request_missing_information",
+    "escalate",
+]
+
+
+class EnvironmentAction(APIModel):
+    """A bounded command selected from the server-owned synthetic action space."""
+
+    type: EnvironmentActionType
+    reason_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+    )
+
+
+class EnvironmentActionContext(APIModel):
+    """The complete, intentionally narrow input visible to an environment policy."""
+
+    observation: dict[str, Any]
+    allowed_actions: list[EnvironmentActionType] = Field(min_length=1, max_length=32)
+
+    @field_validator("allowed_actions")
+    @classmethod
+    def require_unique_actions(
+        cls, value: list[EnvironmentActionType]
+    ) -> list[EnvironmentActionType]:
+        if len(value) != len(set(value)):
+            raise ValueError("Allowed environment actions must be unique")
+        return value
+
+
+class EnvironmentRunRequest(APIModel):
+    episode_definition_id: uuid.UUID
+    actor_role: Literal[
+        "environment_agent",
+        "patient",
+        "clinical_staff",
+        "provider",
+        "biller",
+        "mso_owner",
+    ]
+    seed: int = Field(default=0, ge=0, le=2_147_483_647)
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+
+
+class EnvironmentStepRequest(APIModel):
+    expected_sequence: int = Field(ge=1)
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    action: EnvironmentAction
+
+
+class EnvironmentModelStepRequest(APIModel):
+    """Advance one synthetic step using the configured model policy."""
+
+    expected_sequence: int = Field(ge=1)
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+
+
 class AppealRequest(APIModel):
     denial_id: uuid.UUID
     appeal_text: str | None = Field(default=None, min_length=1, max_length=20_000)
@@ -269,4 +349,5 @@ AI_OUTPUT_SCHEMAS: dict[str, type[APIModel]] = {
     "pathology_summary": PathologySummaryOutput,
     "denial_recommendation": DenialRecommendationOutput,
     "document_extraction": DocumentExtractionOutput,
+    "environment_action": EnvironmentAction,
 }

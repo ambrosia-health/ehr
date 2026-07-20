@@ -59,10 +59,13 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       requestId = response.headers.get("x-request-id") ?? undefined;
       serverTiming = response.headers.get("server-timing") ?? undefined;
     } catch (error) {
-      outcome = timedOut ? "timeout" : "network_error";
+      const cancelled = !timedOut && callerSignal?.aborted === true;
+      outcome = timedOut ? "timeout" : cancelled ? "cancelled" : "network_error";
       throw new ApiError(
         timedOut
           ? "The API request timed out. Please try again."
+          : cancelled
+            ? "The API request was cancelled."
           : error instanceof Error
             ? error.message
             : "The API could not be reached.",

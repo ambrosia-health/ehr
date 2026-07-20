@@ -43,6 +43,23 @@ erDiagram
 
 The graph is intentionally selective; foreign keys in migrations must preserve the full patient → lesion → image → encounter → procedure → specimen → order → result chain shown during Sarah Mitchell’s journey.
 
+The learning graph references that source-of-truth graph; it never replaces it:
+
+```mermaid
+erDiagram
+    DOMAIN_EVENTS ||--o{ EPISODE_EVENT_LINKS : linked_into
+    EPISODE_DEFINITIONS ||--o{ EPISODE_INSTANCES : defines
+    EPISODE_INSTANCES ||--o{ OBSERVATION_MANIFESTS : snapshots
+    OBSERVATION_MANIFESTS ||--o{ OBSERVATION_RESOURCES : references
+    EPISODE_INSTANCES ||--o{ DECISION_POINTS : contains
+    DECISION_POINTS ||--o{ ACTION_ATTEMPTS : offers
+    ACTION_ATTEMPTS ||--o{ OUTCOME_OBSERVATIONS : produces
+    SIMULATION_SCENARIOS ||--o{ ENVIRONMENT_RUNS : configures
+    ENVIRONMENT_RUNS ||--o{ ENVIRONMENT_STEPS : advances
+    ENVIRONMENT_STEPS ||--o{ REWARD_COMPONENTS : evaluates
+    DATASET_RELEASES ||--o{ DATASET_RELEASE_ITEMS : freezes
+```
+
 ## Table catalog
 
 ### Identity and organizations
@@ -134,6 +151,28 @@ All money uses fixed-precision decimal or integer minor units plus ISO currency.
 | `provenance_records` | Derivation chain among input resources, AI/human agents, output and executed domain records. |
 | `prompt_versions` | Immutable capability prompt/schema/evaluation identity and release status. |
 
+### Learning, evaluation and datasets
+
+| Table | Purpose and important relationships |
+|---|---|
+| `domain_events` | Append-only, tenant-scoped transactional outbox with aggregate sequence, actor/request/causation, domain and record time, purpose/sensitivity, bounded payload and canonical hash. |
+| `event_delivery_checkpoints` | Mutable per-consumer/partition cursor and lease; exporter failure never changes source events. |
+| `episode_definitions` | Versioned start/termination, observation/action/reward schemas and step/time limits. |
+| `episode_instances` | One live, historical or synthetic trajectory with seed, start/end events and explicit counterfactual boundary. |
+| `episode_event_links` | Ordered many-to-many event membership; episodes can be assembled without rewriting events. |
+| `observation_manifests` | Point-in-time decision cutoff and immutable manifest hash; inline snapshots are permitted only for synthetic state. |
+| `observation_resources` | Ordered resource ID/version, effective/recorded time, content hash and optional governed snapshot reference. |
+| `decision_points` | Exact observation, offered actions, policy references, displayed proposal/render acknowledgement, actor and decision time. |
+| `action_attempts` | Selected action/non-action, proposal and expected-target versions, idempotency, human edit metadata, status and result event. |
+| `outcome_observations` | Delayed result with window, source, confidence and `observed`/`simulated`/`expert`/`unsupported_counterfactual` provenance. |
+| `policy_versions` | Immutable released policy contents and effective interval; `automation_policies.current_version_id` is the mutable pointer. |
+| `simulation_scenarios` | Synthetic-only initial state, actor models, transition/reward/fault specs and simulator versions. |
+| `environment_runs` | Isolated replay/simulation/shadow run identity, code/config/seed, optimistic state, reward totals and termination. |
+| `environment_steps` | Ordered observation → action → transition receipt with before/after hashes, simulator time, support kind and latency. |
+| `reward_components` | Versioned vector evaluator output and evidence; hard violations remain explicit instead of disappearing into a scalar. |
+| `dataset_releases` | Governed immutable release manifest: purpose, legal basis, cohort, cutoffs, versions, de-identification, splits, lineage and lifecycle. |
+| `dataset_release_items` | Ordered episode/run/event membership with split assignment; membership is normalized rather than embedded in manifest JSON. |
+
 ### Governance and demo
 
 | Table | Purpose and important relationships |
@@ -153,6 +192,9 @@ All money uses fixed-precision decimal or integer minor units plus ISO currency.
 - A claim line references the performed procedure/encounter it bills. Submitted claim history is never rewritten; corrections create events/replacements.
 - Provider webhooks and demo triggers use unique `(organization_id, provider, external_event_id)` or equivalent keys.
 - AI approval requires the proposal’s current version and target’s expected version, preventing stale approval from overwriting newer work.
+- Domain-event aggregate sequences, episode/decision/action/step sequences and environment run keys are tenant-scoped and unique. Mutable run, checkpoint, policy pointer and proposal records use optimistic versions.
+- Observation and outcome evidence is append-only after insert; released definitions, policies, scenarios and datasets cannot be edited in place. A new version is required.
+- Simulation scenarios are constrained to synthetic-only. Live resource bodies cannot be stored in `synthetic_snapshot_json`, and client requests cannot supply observations, outcomes, evaluator evidence or rewards.
 - Hard deletes are limited to synthetic reset or legally governed purge jobs. Ordinary workflows close/cancel/void records and preserve history.
 
 ## Index strategy
@@ -167,6 +209,7 @@ Every tenant query begins with `organization_id`. High-value compound indexes in
 - claim work: `(organization_id, status, updated_at)` and denial owner/due time;
 - audit: `(organization_id, target_type, target_id, occurred_at)` and `(organization_id, actor_id, occurred_at)`;
 - idempotency: unique tenant-scoped keys on commands, integrations, workflow triggers and payments.
+- learning: `(organization_id, recorded_at, id)` for event export; tenant + aggregate sequence, patient/occurred time, episode/sequence, run/step, outcome type/time and reward evaluator keys for replay/evaluation.
 
 Indexes must be justified with production-like query plans before a pilot; avoid indexing sensitive free text.
 
@@ -195,6 +238,7 @@ MSO metrics are SQL/read-model calculations over committed records. Each metric 
 ## Migration and seed discipline
 
 - Alembic revision `20260716_0001` is the shared baseline and is frozen. `.github/frozen-migrations.sha256` is checked by CI/deployment; never regenerate, edit, or merely update its checksum after this handoff. Every schema correction uses a new revision. All later revisions are likewise immutable after sharing and follow expand/migrate/contract changes compatible with concurrently deployed application versions.
+- Revision `20260717_0003` is the expand-first learning substrate: it backfills workflow counters and policy version 1 before linking new pointers, then adds event/episode/evaluation tables and PostgreSQL evidence guards. Its frozen checksum is release evidence; any correction requires revision `0004` or later.
 - CI upgrades an empty database to head and, when fixtures exist, exercises upgrade from the prior release baseline.
 - Seed uses stable natural scenario keys plus upserts so rerunning it is idempotent. It records a seed version and checks referential/financial invariants.
 - Reset targets only the canonical demo organization, fails if it is absent, and in deployed environments (`staging` or `production`) additionally requires `ALLOW_SYNTHETIC_DEMO_RESET=true`; presenter/API reset also requires an active delegated presenter session.

@@ -45,7 +45,7 @@ make check       # lint/type/build/test release checks
 make demo-health # API, same-origin route, and canonical-scenario health
 ```
 
-For browser verification, keep `make dev` running and run `make e2e` in a second terminal. Playwright checks direct Today entry, the Patients portfolio, Sarah's focused decision view, Practice, the absence of compatibility routes, and the live same-origin API contract.
+For browser verification, keep `make dev` running and run `make e2e` in a second terminal. Playwright checks direct Today entry, the Patients portfolio, Sarah's focused decision view, Practice, the absence of compatibility routes, and the live same-origin API contract. Authorized internal users can open `/internal/learning` to inspect synthetic learning capture and model evaluation runs; it is isolated from clinician navigation and requires the presenter code.
 
 Local defaults are safe only for disposable development. Generate unique session/presenter secrets before any shared preview. Hosted environments must use Neon TLS URLs and platform secret stores, never `.env`.
 
@@ -68,6 +68,7 @@ Key invariants:
 - every tenant-owned record is organization-scoped and every Modal operation re-authorizes it;
 - signed notes are immutable; corrections are append-only amendments;
 - AI produces schema-validated proposals with provenance, not silent clinical/financial actions;
+- consequential use cases atomically append bounded learning events; synthetic environment runs are isolated from care state and clients cannot author observations, outcomes, or rewards;
 - durable jobs and demo timeline state live in Postgres, not a transient Modal queue;
 - bundled demo images are explicitly synthetic public fixtures with owned metadata; any future user upload must use a private authorized object pipeline, never a Postgres blob;
 - dashboard values are calculated from source records, not display constants.
@@ -81,6 +82,7 @@ Key invariants:
 - [Functional vs simulated capabilities](docs/capabilities.md)
 - [Deployment and operations](docs/deployment.md)
 - [Performance observability and budgets](docs/performance.md)
+- [Healthcare learning substrate and synthetic RL environment](docs/learning-environment.md)
 - [Production-readiness backlog](docs/production-readiness.md)
 
 ## Delivery commands

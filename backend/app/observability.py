@@ -62,6 +62,13 @@ def reset_request(token: Token[RequestMetrics | None]) -> None:
     _request_metrics.reset(token)
 
 
+def current_request_id() -> str | None:
+    """Return the bounded request correlation ID without exposing request payloads."""
+
+    metrics = _request_metrics.get()
+    return metrics.request_id if metrics is not None else None
+
+
 def record_database_query(duration_ms: float, statement: str, *, failed: bool = False) -> None:
     metrics = _request_metrics.get()
     if metrics is None:

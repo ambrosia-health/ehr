@@ -49,4 +49,19 @@ describe("apiRequest", () => {
       message: "The API request timed out. Please try again.",
     });
   });
+
+  it("treats caller cancellation as expected control flow", async () => {
+    const controller = new AbortController();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_path, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    })));
+
+    const request = apiRequest("/api/demo/learning/console", { signal: controller.signal });
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ status: 0, message: "The API request was cancelled." });
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
+  });
 });
