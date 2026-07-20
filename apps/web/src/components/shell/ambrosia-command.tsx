@@ -1,8 +1,9 @@
 "use client";
 
-import { CheckCircle2, Command, Flower, Send } from "lucide-react";
+import { AlertCircle, CheckCircle2, Command, Flower, LoaderCircle, Send } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
+import { useProductWorkspace } from "@/components/platform/product-workspace-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,6 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { apiRequest } from "@/lib/api/client";
 
 const suggestions = [
   "Prepare my next patient",
@@ -25,16 +27,41 @@ interface AmbrosiaCommandProps {
 }
 
 export function AmbrosiaCommand({ open, onOpenChange }: AmbrosiaCommandProps) {
+  const { workspace } = useProductWorkspace();
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const request = query.trim();
     if (!request) return;
 
-    setResponse(`Ambrosia prepared a reviewable plan for “${request}”. No records changed.`);
-    setQuery("");
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await apiRequest<{ output: { headline: string; suggestedFocus: string[] } }>("/api/ai/chart_summary", {
+        method: "POST",
+        body: {
+          patientId: workspace.patient.id,
+          context: {
+            request,
+            patientName: workspace.patient.name,
+            activeConcern: workspace.patient.lesion.label,
+            assessmentPlan: workspace.encounter.draftNote.assessmentPlan,
+            openQueues: workspace.queues.filter((queue) => queue.count > 0),
+          },
+        },
+      });
+      const focus = Array.isArray(result.output.suggestedFocus) ? result.output.suggestedFocus.join(" ") : "";
+      setResponse([result.output.headline, focus].filter(Boolean).join(" "));
+      setQuery("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Ambrosia could not prepare the plan.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -66,8 +93,8 @@ export function AmbrosiaCommand({ open, onOpenChange }: AmbrosiaCommandProps) {
                 autoFocus
                 className="h-11 border-0 bg-transparent px-1 text-sm shadow-none focus-visible:ring-0"
               />
-              <Button type="submit" size="icon" className="rounded-md" aria-label="Send command" disabled={!query.trim()}>
-                <Send className="size-4" />
+              <Button type="submit" size="icon" className="rounded-md" aria-label="Send command" disabled={!query.trim() || submitting}>
+                {submitting ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
               </Button>
             </div>
           </form>
@@ -99,7 +126,14 @@ export function AmbrosiaCommand({ open, onOpenChange }: AmbrosiaCommandProps) {
               <div>
                 <p className="font-semibold text-foreground">Plan ready for review</p>
                 <p className="mt-1 text-xs leading-5">{response}</p>
+                <p className="mt-2 text-[10px] leading-4 text-muted-foreground">AI run recorded for inspection. No clinical record changed.</p>
               </div>
+            </div>
+          ) : null}
+          {error ? (
+            <div role="alert" className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/5 p-4 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 size-5 shrink-0" />
+              <p>{error}</p>
             </div>
           ) : null}
         </div>

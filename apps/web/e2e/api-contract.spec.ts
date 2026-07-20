@@ -39,7 +39,7 @@ test("same-origin API enforces the supported session and validation contract", a
     organization: { timezone: "America/New_York" },
   });
   const bootstrapTiming = observedTiming(bootstrap);
-  expect(bootstrapTiming.queryCount).toBeLessThanOrEqual(150);
+  expect(bootstrapTiming.queryCount).toBeLessThanOrEqual(130);
   expect(bootstrapTiming.durationMs).toBeLessThan(5_000);
 
   expect((await page.request.get("/api/rcm")).status()).toBe(403);

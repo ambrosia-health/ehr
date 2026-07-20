@@ -1,43 +1,32 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { PracticeScreen } from "@/components/platform/practice-screen";
+import { createProductWorkspace, renderWithProductWorkspace } from "@/test/product-workspace";
 
 describe("PracticeScreen", () => {
-  it("summarizes a healthy practice without creating an admin queue", () => {
-    render(<PracticeScreen />);
+  it("derives operations counts from queues and the command center", () => {
+    renderWithProductWorkspace(<PracticeScreen />);
 
-    expect(screen.getByRole("heading", { name: "Practice is running.", level: 1 })).toBeVisible();
-    expect(screen.getByText("The work is moving quietly. Nothing needs your attention.")).toBeVisible();
-
+    expect(screen.getByRole("heading", { name: "Practice needs review.", level: 1 })).toBeVisible();
     const operationsSummary = screen.getByRole("region", { name: "Operations summary" });
-    expect(within(operationsSummary).getByText("Moving")).toBeVisible();
-    expect(within(operationsSummary).getByText("309")).toBeVisible();
-    expect(within(operationsSummary).getByText("Waiting externally")).toBeVisible();
-    expect(within(operationsSummary).getByText("7")).toBeVisible();
-    expect(within(operationsSummary).getByText("Needs you")).toBeVisible();
-    expect(screen.getByText("0 safety risks")).toBeVisible();
-    expect(screen.getByText("No office work is waiting on you.")).toBeVisible();
+    expect(within(operationsSummary).getByText("Scheduled")).toBeVisible();
+    expect(within(operationsSummary).getByText("Open work")).toBeVisible();
+    expect(within(operationsSummary).getByText("Needs clinician")).toBeVisible();
+    expect(within(operationsSummary).getAllByText("1")).toHaveLength(3);
   });
 
-  it("shows automation receipts and reveals advanced controls on demand", async () => {
+  it("renders database-calculated automation health and provenance", async () => {
     const user = userEvent.setup();
-    render(<PracticeScreen />);
+    renderWithProductWorkspace(<PracticeScreen />, createProductWorkspace({ completed: true }));
 
     const automationHealth = screen.getByRole("region", { name: "Automation health" });
-    expect(within(automationHealth).getByRole("progressbar", { name: "Front desk automation health" })).toHaveAttribute("aria-valuenow", "100");
-    expect(within(automationHealth).getByRole("progressbar", { name: "Clinical preparation automation health" })).toHaveAttribute("aria-valuenow", "99.8");
-    expect(screen.getByRole("complementary", { name: "Today's admin receipts" })).toBeVisible();
-    expect(screen.getByText("31 routine actions completed today")).toBeVisible();
+    expect(within(automationHealth).getByRole("progressbar", { name: "Visit readiness automation health" })).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByRole("complementary", { name: "Recent durable activity" })).toBeVisible();
 
-    const disclosureLabel = screen.getByText("Advanced controls");
-    const disclosure = disclosureLabel.closest("details");
-    expect(disclosure).not.toHaveAttribute("open");
-
-    await user.click(disclosureLabel);
-
-    expect(disclosure).toHaveAttribute("open");
-    expect(within(disclosure as HTMLElement).getByText("100% of actions recorded")).toBeVisible();
+    await user.click(screen.getByText("Data provenance"));
+    expect(screen.getByText("Version 2 · signed")).toBeVisible();
+    expect(screen.getByText(/encounters \+ encounter_notes/)).toBeVisible();
   });
 });

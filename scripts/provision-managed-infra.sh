@@ -13,15 +13,20 @@ GITHUB_REPOSITORY="ambrosia-health/ehr"
 MAIN_API="https://kshr-ai--ambrosia-health-domain-api-api.modal.run"
 STAGING_API="https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run"
 WEB_ORIGIN="https://ambrosia-ehr.vercel.app"
+VERCEL_CLI_VERSION="56.4.0"
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY must be supplied by an authorized platform operator}"
 
-for command in gh neonctl node npm openssl uv; do
+for command in gh neonctl node npm npx openssl uv; do
   command -v "$command" >/dev/null || {
     echo "$command is required to provision managed infrastructure" >&2
     exit 1
   }
 done
+
+vercel_cli() {
+  npx --yes "vercel@$VERCEL_CLI_VERSION" "$@"
+}
 
 make backend-install web-install >/dev/null
 
@@ -102,6 +107,10 @@ printf '%s' "$STAGING_API/api/health" | gh secret set MODAL_API_HEALTH_URL --env
 printf '%s' "$staging_direct" | gh secret set NEON_DATABASE_URL_DIRECT --env staging -R "$GITHUB_REPOSITORY"
 printf '%s' "$OPENAI_API_KEY" | gh secret set OPENAI_API_KEY --env staging -R "$GITHUB_REPOSITORY"
 echo "Modal main/staging and GitHub production/staging secrets are synchronized."
+
+printf '%s' "$MAIN_API" | vercel_cli env add AMBROSIA_API_ORIGIN production --force --no-sensitive --cwd apps/web >/dev/null
+printf '%s' "$STAGING_API" | vercel_cli env add AMBROSIA_API_ORIGIN preview --force --no-sensitive --cwd apps/web >/dev/null
+echo "Vercel production and preview API origins are synchronized."
 
 deploy_and_attest() {
   local environment="$1"

@@ -64,7 +64,7 @@ make reset
 
 ### Vercel runtime configuration
 
-The managed Vercel project intentionally has no application environment variables and disables automatic system-variable exposure. Canonical and main-branch hosts route to Modal main; preview and unknown hosts route to Modal staging through versioned `next.config.ts` rules. This removes encrypted runtime-env loading from middleware and keeps preview separation functional even when platform env injection is unavailable. Local builds may still use the server-only `AMBROSIA_API_ORIGIN` override.
+`AMBROSIA_API_ORIGIN` is a required server-only binding in every environment. Vercel Production receives the Modal main origin and Vercel Preview receives the Modal staging origin; the reconciliation script updates both. Local `make` targets export the local FastAPI origin. `next.config.ts` has one rewrite path and fails the build when the binding is missing, so no hostname heuristic or implicit local fallback can send an environment to the wrong API.
 | `BLOB_READ_WRITE_TOKEN` | server only, if uploads enabled | Private synthetic upload adapter. Do not expose to the browser. |
 
 Frontend requests remain `/api/...`. Next.js performs a same-origin rewrite to Modal, preserving the browser's session request. Modal authenticates and authorizes it, assigns or returns `X-Request-ID`, and emits private/no-store headers; Next adds matching no-store and `Vary: Cookie` headers. A lightweight Next.js request Proxy performs only an optimistic product-route cookie check, keeping presentation routes static and prefetchable; Modal remains the authorization boundary for every read and mutation. This demo does not implement a custom route-handler proxy or a header/body allowlist. Explicit forwarding rules and body/time limits are production gates if the API rewrite is replaced by an application proxy.
@@ -112,18 +112,18 @@ The script:
 1. resolves pooled and direct TLS URLs for the registered Neon branches without printing them;
 2. migrates, idempotently seeds, and verifies staging and hosted-production demo databases;
 3. replaces Modal runtime/OpenAI secrets and the GitHub environment secrets used by deployment jobs;
-4. relies on versioned Vercel host routing with no runtime variables or browser credentials;
+4. reconciles the non-secret Vercel `AMBROSIA_API_ORIGIN` binding for Production and Preview without exposing it to browser JavaScript;
 5. deploys Modal `main` and `staging` and verifies API plus Neon readiness;
 6. invokes the repository AI attestation through the Responses API and fails closed unless OpenAI returns `gpt-5.6-luna` with low reasoning and a schema- plus semantic-valid body;
 7. runs the hosted dermatologist workspace and same-origin API contracts against the Vercel production alias.
 
-`RUN_HOSTED_E2E=0` skips the final browser contracts only for a deliberate infrastructure-only recovery operation; it is not a release attestation. The workspace contract is read-only apart from in-browser prototype state, while the API contract creates and then ends its own signed synthetic session.
+`RUN_HOSTED_E2E=0` skips the final browser contracts only for a deliberate infrastructure-only recovery operation; it is not a release attestation. Hosted workspace smoke checks are read-only; mutation behavior is exercised against resettable local/CI synthetic databases, while the API contract creates and then ends its own signed synthetic session.
 
 This script is an infrastructure-maintainer operation, not contributor bootstrap. Product developers and new agents use `make dev` locally and Git for hosted previews; they do not handle connection strings or platform secrets.
 
 ## Vercel preview
 
-The Vercel project is already linked to GitHub with Root Directory `apps/web`. A branch/PR push creates one native Vercel Preview; a `main` push creates a Production deployment. Preview server traffic rewrites to Modal `staging`, while the Production alias rewrites to Modal `main`.
+The Vercel project is already linked to GitHub with Root Directory `apps/web`. A branch/PR push creates one native Vercel Preview; a `main` push creates a Production deployment. The environment-scoped binding sends Preview server traffic to Modal `staging` and Production traffic to Modal `main` through the identical rewrite implementation.
 
 `.github/workflows/vercel-preview.yml` has two responsibilities and no deployment credential:
 

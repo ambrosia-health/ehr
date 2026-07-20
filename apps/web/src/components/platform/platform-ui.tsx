@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import type { JourneyStatus } from "./platform-fixtures";
+type JourneyStatus = "complete" | "moving" | "waiting" | "human" | "risk";
 
 export function ScreenFrame({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("min-h-screen bg-background text-foreground", className)}>{children}</div>;

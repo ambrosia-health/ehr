@@ -24,10 +24,9 @@ test("opens directly into the dermatologist operating system", async ({ page }) 
   await expect(page.getByText(/sign in|switch persona|presenter controls/i)).toHaveCount(0);
 
   await expect(page.getByText("Sarah Mitchell", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Approve plan" }).click();
-  await expect(page.getByRole("status")).toContainText("Sarah Mitchell’s approved plan is moving");
-  await expect(page.getByText("2 decisions · about 6 min")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Jordan’s pathology needs a clinical disposition.", level: 3 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Clinical decisions", level: 2 })).toBeVisible();
+  await expect(page.getByText("312 active journeys")).toHaveCount(0);
+  await expect(page.getByText(/Jordan Lee|Natalie Wong|Alex Rivera/)).toHaveCount(0);
 });
 
 test("keeps the focused clinician workspace connected through canonical routes", async ({ page }) => {
@@ -35,7 +34,7 @@ test("keeps the focused clinician workspace connected through canonical routes",
 
   const routes = [
     ["Patients", "/patients", "Patients"],
-    ["Practice", "/practice", "Practice is running."],
+    ["Practice", "/practice", /Practice (is running|needs review)\./],
   ] as const;
 
   for (const [link, path, heading] of routes) {
@@ -46,7 +45,7 @@ test("keeps the focused clinician workspace connected through canonical routes",
 
   await page.getByRole("link", { name: "Patients", exact: true }).click();
   await page.getByRole("link", { name: "Open Sarah Mitchell", exact: true }).click();
-  await expect(page).toHaveURL("/patients/sarah-mitchell");
+  await expect(page).toHaveURL(/\/patients\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "Sarah Mitchell", level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: "Patients", exact: true })).toHaveAttribute("aria-current", "page");
 });

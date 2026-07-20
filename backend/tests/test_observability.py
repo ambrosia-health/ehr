@@ -73,4 +73,4 @@ async def test_bootstrap_stays_within_query_and_local_latency_budgets(client) ->
     query_match = re.search(r'desc="(\d+) queries"', timing)
     assert duration_match and query_match
     assert float(duration_match.group(1)) < 1_000
-    assert int(query_match.group(1)) <= 150
+    assert int(query_match.group(1)) <= 130

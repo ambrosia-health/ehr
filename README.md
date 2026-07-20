@@ -61,7 +61,7 @@ Local defaults are safe only for disposable development. Generate unique session
 
 ## Demo and implementation truth
 
-Start with [`DEMO.md`](DEMO.md). [`docs/capabilities.md`](docs/capabilities.md) distinguishes the clinician product, functional internal workflows, deterministic external simulators, AI fallback, and production gaps. The current product views use explicit synthetic frontend fixtures; backend persistence and authorization are evidenced independently by API, workflow, and health checks.
+Start with [`DEMO.md`](DEMO.md). [`docs/capabilities.md`](docs/capabilities.md) distinguishes the clinician product, functional internal workflows, deterministic external simulators, AI fallback, and production gaps. Product views use the authenticated role-scoped API read model; approvals, note edits, and command runs persist through the same domain endpoints used in every environment.
 
 Key invariants:
 

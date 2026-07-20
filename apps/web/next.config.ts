@@ -1,42 +1,21 @@
 import type { NextConfig } from "next";
 
-const productionApiOrigin = "https://kshr-ai--ambrosia-health-domain-api-api.modal.run";
-const stagingApiOrigin = "https://kshr-ai-staging--ambrosia-health-domain-api-api.modal.run";
-const productionHosts = [
-  "ambrosia-ehr.vercel.app",
-  "ambrosia-ehr-kshr.vercel.app",
-  "ambrosia-ehr-git-main-kshr.vercel.app",
-];
+const configuredApiOrigin = process.env.AMBROSIA_API_ORIGIN?.trim();
+if (!configuredApiOrigin) {
+  throw new Error("AMBROSIA_API_ORIGIN is required in local, preview, and production environments.");
+}
+
+const apiOriginUrl = new URL(configuredApiOrigin);
+if (!["http:", "https:"].includes(apiOriginUrl.protocol)) {
+  throw new Error("AMBROSIA_API_ORIGIN must use http or https.");
+}
+const apiOrigin = configuredApiOrigin.replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   async rewrites() {
-    const configuredOrigin = process.env.AMBROSIA_API_ORIGIN?.trim() || undefined;
-    const apiOrigin = (configuredOrigin ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : undefined))?.replace(/\/$/, "");
-    if (apiOrigin) {
-      return [
-        {
-          source: "/api/:path*",
-          destination: `${apiOrigin}/api/:path*`,
-        },
-      ];
-    }
-
-    return {
-      beforeFiles: productionHosts.map((host) => ({
-        source: "/api/:path*",
-        destination: `${productionApiOrigin}/api/:path*`,
-        has: [{ type: "host" as const, value: host }],
-      })),
-      afterFiles: [],
-      fallback: [
-        {
-          source: "/api/:path*",
-          destination: `${stagingApiOrigin}/api/:path*`,
-        },
-      ],
-    };
+    return [{ source: "/api/:path*", destination: `${apiOrigin}/api/:path*` }];
   },
   async headers() {
     return [

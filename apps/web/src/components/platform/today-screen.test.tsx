@@ -1,37 +1,48 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TodayScreen } from "@/components/platform/today-screen";
+import { createProductWorkspace, renderWithProductWorkspace } from "@/test/product-workspace";
+
+const apiRequestMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api/client", () => ({
+  ApiError: class ApiError extends Error { constructor(message: string, public status: number) { super(message); } },
+  apiRequest: apiRequestMock,
+}));
 
 describe("TodayScreen", () => {
-  it("opens on one prioritized decision and a prepared day", () => {
-    render(<TodayScreen />);
+  beforeEach(() => apiRequestMock.mockReset());
+
+  it("renders the database-backed clinician and workday snapshot", () => {
+    renderWithProductWorkspace(<TodayScreen />);
 
     expect(screen.getByRole("heading", { name: "Good morning, Maya.", level: 1 })).toBeVisible();
-    expect(screen.getByText("3 decisions · about 8 min")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "This lesion changed since her last visit." })).toBeVisible();
-    expect(screen.getByText("Everything else is moving")).toBeVisible();
+    expect(screen.getByText("1 decision")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Biopsy this changing lesion?" })).toBeVisible();
+    expect(screen.getAllByText("2:30 PM")).toHaveLength(2);
+    expect(screen.getByText("1 scheduled · 1 summary prepared")).toBeVisible();
   });
 
-  it("advances immediately to the next clinical decision after approval", async () => {
+  it("persists approval through the encounter endpoint and refreshes the workspace", async () => {
     const user = userEvent.setup();
-    render(<TodayScreen />);
+    apiRequestMock.mockImplementation((path: string) => path === "/api/demo/bootstrap" ? Promise.resolve(createProductWorkspace({ completed: true })) : Promise.resolve({}));
+    renderWithProductWorkspace(<TodayScreen />);
 
     await user.click(screen.getByRole("button", { name: "Approve plan" }));
 
-    expect(screen.getByRole("status")).toHaveTextContent("Sarah Mitchell’s approved plan is moving");
-    expect(screen.getByText("2 decisions · about 6 min")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Jordan’s pathology needs a clinical disposition." })).toBeVisible();
+    expect(apiRequestMock).toHaveBeenCalledWith("/api/encounters/encounter-1/complete", expect.objectContaining({ method: "POST" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Sarah Mitchell’s approved plan is moving");
+    expect(screen.getByRole("heading", { name: "All decisions are clear." })).toBeVisible();
   });
 
-  it("reveals supporting evidence without leaving the decision", async () => {
+  it("reveals source evidence without leaving the decision", async () => {
     const user = userEvent.setup();
-    render(<TodayScreen />);
+    renderWithProductWorkspace(<TodayScreen />);
 
     await user.click(screen.getByRole("button", { name: "View evidence" }));
 
-    expect(screen.getByRole("region", { name: "Evidence summary" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Hide evidence" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "Evidence summary" })).toHaveTextContent("New irregular pigmentation compared with baseline");
   });
 });

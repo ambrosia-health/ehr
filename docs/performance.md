@@ -33,7 +33,7 @@ Stop the log capture after the representative journey completes. The report rank
 
 ## Regression gates
 
-- `backend/tests/test_observability.py` requires correlation and timing headers, structured privacy-safe route logs, and a bootstrap ceiling of 150 SQL statements and one second against the local test database.
+- `backend/tests/test_observability.py` requires correlation and timing headers, structured privacy-safe route logs, and a provider-bootstrap ceiling of 130 SQL statements and one second against the local test database. The July 2026 product-data connection reduced the measured local path from 143 to 124 statements by skipping RCM projection work outside presenter/biller scope.
 - `backend/tests/test_learning_environment.py` fixes local SQL ceilings for the synthetic learning plane: 5 for episode or dataset catalogs, 15 for run creation, 7 for a current-run read, and 25 for an atomic step. The step budget includes one write for its immutable idempotency receipt, which prevents a late retry from being reconstructed against newer run state. Detail responses remain bounded to the latest step rather than growing with history.
 - `backend/tests/test_learning_console_reads.py` caps the internal console read models at 8 statements for bootstrap, 7 for a trajectory page, and 10 for a run-history page. API coverage allows 20, 16, and 60 statements respectively for the composed console feed, history response, and first model-driven step; an idempotent retry uses the stored action/run provenance and does not invoke the model again.
 - `apps/web/e2e/api-contract.spec.ts` requires timing headers through the real Next.js rewrite and caps bootstrap server duration at five seconds in local and hosted E2E.

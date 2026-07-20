@@ -2966,16 +2966,25 @@ async def demo_bootstrap(
             }
         )
 
-    hero_claim = await session.scalar(
-        select(Claim).where(
-            Claim.organization_id == organization_id,
-            Claim.encounter_id == ids["sarah_encounter_id"],
+    include_claims = bool(session_payload.get("presenter") or "biller" in roles)
+    hero_claim = (
+        await session.scalar(
+            select(Claim).where(
+                Claim.organization_id == organization_id,
+                Claim.encounter_id == ids["sarah_encounter_id"],
+            )
         )
+        if include_claims
+        else None
     )
-    denied_claim_ids = list(
-        await session.scalars(
-            select(Denial.claim_id).where(Denial.organization_id == organization_id)
+    denied_claim_ids = (
+        list(
+            await session.scalars(
+                select(Denial.claim_id).where(Denial.organization_id == organization_id)
+            )
         )
+        if include_claims
+        else []
     )
     claim_scope = or_(Claim.id == ids["sarah_claim_id"], Claim.id.in_(denied_claim_ids))
     if "patient" in roles:
@@ -2990,30 +2999,35 @@ async def demo_bootstrap(
         .exists()
     )
     claim_rows = (
-        await session.execute(
-            select(Claim, Patient, Coverage)
-            .join(
-                Patient,
-                (Patient.id == Claim.patient_id) & (Patient.organization_id == organization_id),
+        (
+            await session.execute(
+                select(Claim, Patient, Coverage)
+                .join(
+                    Patient,
+                    (Patient.id == Claim.patient_id) & (Patient.organization_id == organization_id),
+                )
+                .join(
+                    Coverage,
+                    (Coverage.id == Claim.coverage_id)
+                    & (Coverage.organization_id == organization_id),
+                )
+                .where(
+                    Claim.organization_id == organization_id,
+                    claim_scope,
+                )
+                .order_by(
+                    actionable_open_denial.desc(),
+                    (Claim.id == ids["sarah_claim_id"]).desc(),
+                    (Claim.status != "denied").desc(),
+                    Claim.claim_number.desc(),
+                    Claim.id,
+                )
+                .limit(2)
             )
-            .join(
-                Coverage,
-                (Coverage.id == Claim.coverage_id) & (Coverage.organization_id == organization_id),
-            )
-            .where(
-                Claim.organization_id == organization_id,
-                claim_scope,
-            )
-            .order_by(
-                actionable_open_denial.desc(),
-                (Claim.id == ids["sarah_claim_id"]).desc(),
-                (Claim.status != "denied").desc(),
-                Claim.claim_number.desc(),
-                Claim.id,
-            )
-            .limit(2)
-        )
-    ).all()
+        ).all()
+        if include_claims
+        else []
+    )
     claims = []
     for claim, patient, claim_coverage in claim_rows:
         lines = (
@@ -3256,7 +3270,8 @@ async def demo_bootstrap(
         local_schedule.append(
             {
                 "id": appointment["id"],
-                "time": local_time.strftime("%-I:%M"),
+                "startsAt": appointment["starts_at"],
+                "time": local_time.strftime("%-I:%M %p"),
                 "patient": appointment["patient_name"],
                 "visit": appointment["visit_type"],
                 "provider": appointment["provider_name"],

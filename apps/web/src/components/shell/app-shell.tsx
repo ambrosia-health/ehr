@@ -8,6 +8,8 @@ import { useEffect, useState, type PropsWithChildren } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useProductWorkspace } from "@/components/platform/product-workspace-provider";
+import { clinicianInitials, locationName } from "@/components/platform/product-workspace";
 import { cn } from "@/lib/utils";
 
 import { AmbrosiaCommand } from "./ambrosia-command";
@@ -77,14 +79,16 @@ function MainNavigation({ mobile = false, onNavigate }: MainNavigationProps) {
 }
 
 function ClinicianIdentity() {
+  const { workspace } = useProductWorkspace();
+
   return (
     <div className="flex items-center gap-3" aria-label="Current dermatologist">
       <Avatar className="size-10 border border-border bg-card">
-        <AvatarFallback className="bg-card text-xs font-medium text-foreground">MC</AvatarFallback>
+        <AvatarFallback className="bg-card text-xs font-medium text-foreground">{clinicianInitials(workspace)}</AvatarFallback>
       </Avatar>
       <span className="min-w-0">
-        <span className="block truncate text-[13px] font-semibold leading-5 text-foreground">Dr. Maya Chen</span>
-        <span className="block truncate text-[11px] leading-4 text-muted-foreground">Midtown Dermatology</span>
+        <span className="block truncate text-[13px] font-semibold leading-5 text-foreground">{workspace.session.displayName}</span>
+        <span className="block truncate text-[11px] leading-4 text-muted-foreground">{locationName(workspace)}</span>
       </span>
       <ChevronDown className="ml-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
     </div>

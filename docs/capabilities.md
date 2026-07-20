@@ -6,7 +6,7 @@
 - **External edge**: whether the demo talks to a real healthcare/financial network or an explicit deterministic adapter.
 - **Production equivalence**: whether the component is suitable for live patients. Nothing in this repository is production-approved; see [`production-readiness.md`](./production-readiness.md).
 
-The browser and domain planes are deliberately separate today. The dermatologist workspace is a fixture-backed product prototype: its records, counts, dates, identity, and interactions are local presentation data and do not persist. The FastAPI/Modal/Neon plane implements the durable capabilities below and is evidenced by backend, API-contract, health, and deployment tests. A capability must not be described as connected in the browser until the workspace consumes it through the shared API client and an integration test proves the path.
+The browser consumes a role-scoped workspace from the FastAPI domain plane through the observable shared API client. Patient facts, clinical images, counts, dates, identity, recommendations, queues, and metrics come from the configured database. Approval and note-edit controls call domain mutation endpoints, refresh that read model, and are covered by component, API-contract, workflow, and browser tests. Static UI labels and test-only fixtures remain code; runtime clinical and operational state does not.
 
 ## Product and domain capabilities
 
@@ -19,14 +19,14 @@ The browser and domain planes are deliberately separate today. The dermatologist
 | Structured intake | Functional normalized allergies, medications, problems, contacts, coverage, consents and images | Synthetic responses/assets | database/API assertions; not one opaque display blob |
 | Eligibility | Functional request/result/benefit records and estimate input | **Deterministic payer simulator** | retry idempotency; request/response provenance |
 | Patient estimate | Functional calculated, versioned estimate | Uses simulated benefits/fee assumptions | line totals and patient amount reconcile |
-| Command center read model | Functional backend queries from current records; current Today UI is a separate fixture-backed projection | None | seeded queue counts equal source-record query results |
+| Command center read model | Functional backend queries consumed by Today and Practice through the authenticated workspace endpoint | None | seeded queue counts equal source records; component/browser contracts render endpoint values |
 | AI pre-visit summary | Functional run/output/proposal/provenance | Authenticated OpenAI GPT-5.6 Luna with low reasoning when schema/semantics/provenance pass; deterministic fallback otherwise | hosted provider/model/reasoning attestation, timeout/invalid-output fallback test, honest run label and source attribution |
 | Encounter state and ambient transcript | Durable encounter/transcript linkage and state | Transcript may be seeded; live speech engine not required | state transition and restart test |
 | Structured note drafting | Versioned draft and AI proposal | Authenticated OpenAI GPT-5.6 Luna with low reasoning when validated; deterministic local/remote fallback otherwise | schema/semantic validation, fallback labeling, edit trail, approval visibility |
 | Signed notes and amendments | Immutable signed snapshot; append-only amendment | None | mutation fails; original/hash/version chronology preserved |
 | Body map and lesion timeline | Persistent lesion, coded body site, observations and comparisons | Synthetic image assets | same lesion spans encounters; ordered observation history |
 | Biopsy review-and-complete | Atomic approved bundle creates note/procedure/specimen/order/claim/tasks/message/audit/provenance | Pathology transmission simulated | transaction rollback and command idempotency tests |
-| Patient aftercare and messaging | Durable conversation, drafts, sent messages and delivery state; current Inbox interactions are non-persistent prototype state | **Deterministic SMS/delivery simulator** | approved message grounding and uncertain-question routing |
+| Patient aftercare and messaging | Durable conversation, drafts, sent messages and delivery state; the focused chart reads current conversation evidence | **Deterministic SMS/delivery simulator** | approved message grounding and uncertain-question routing |
 | Pathology result workflow | Durable result chain, review, task, notification and closure | **Deterministic lab/pathology simulator** | duplicate result idempotency; overdue result remains queued |
 | ePrescribing | Internal proposal/order contract where present | **Deterministic eRx simulator permitted** | must never imply a real prescription was transmitted |
 | Claim construction and validation | Structured claim/lines/events from performed care | None until submission | diagnosis/procedure evidence and balanced totals |
@@ -34,7 +34,7 @@ The browser and domain planes are deliberately separate today. The dermatologist
 | Adjudication/remittance | Durable response, adjustments, payments and balances | **Deterministic remittance simulator** | allocations reconcile to claim/line/balance |
 | Denial and appeal | Durable classification, evidence, recommendation, work task, appeal/resubmission/recovery | **Deterministic payer/clearinghouse simulator** | original denial retained; recovered revenue traceable |
 | Payment settlement | Durable payment/allocation/settlement states | **Deterministic payment simulator** | UI says simulated; ledger remains balanced |
-| MSO analytics | Backend metrics calculated from committed source records; current Operations KPI presentation is hardcoded synthetic data | None | metric formula fixtures and no hard-coded values in the backend read model |
+| MSO analytics | Backend metrics calculated from committed source records and rendered by Practice with their source labels | None | metric formulas, source-record counts, and browser rendering without runtime display constants |
 | Tasks, notifications and workflows | Postgres-backed reminders/tasks/workflow records; current poller delivers due reminders and escalates overdue tasks | Five-minute Modal schedule; deterministic messaging adapter | current poller test; generalized leasing/retry/dead-letter engine remains a pilot gate; no authoritative Modal Queue |
 | Audit and provenance | Append-only actor/action/source/derivation records | None | critical-flow completeness and ordinary-user immutability |
 | Learning event substrate | Transactional append-only domain events, consumer checkpoints, longitudinal episode links and point-in-time observation/decision/action/outcome records; initial capture covers intake, AI, encounter completion, pathology and denial correction seams | No external stream required; Neon is the scale-to-zero outbox | mutation/event atomicity, idempotency/hash conflict, aggregate ordering, append-only and two-tenant tests |

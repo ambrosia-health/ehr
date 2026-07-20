@@ -39,8 +39,7 @@ The zero-credential local default runs the same FastAPI application under Uvicor
 
 ```mermaid
 flowchart TD
-    FX["Synthetic product fixtures"] --> UI["Clinician route + UI modules"]
-    UI -. "future/live reads and writes" .-> QC["Observable shared API client"]
+    UI["Clinician route + UI modules"] --> QC["Observable shared API client"]
     QC --> PX["Same-origin API rewrite"]
     PX --> RT["FastAPI routers"]
     RT --> UC["Application use cases"]
@@ -66,7 +65,7 @@ Ownership means the module is the sole writer of its rules and tables. Other mod
 | Module | Primary code surface | Owns | May depend on |
 |---|---|---|---|
 | Web shell and design system | `apps/web/src/app`, `apps/web/src/components` | navigation, visual language, loading/empty/error states, accessibility | typed client and read models |
-| Dermatologist workspace | `apps/web/src/components/platform` and product routes | Today, Patients, Schedule, Inbox, Results, Revenue, Operations, clinician identity and synthetic presentation fixtures | design system; shared API client when live data is introduced |
+| Dermatologist workspace | `apps/web/src/components/platform` and product routes | Today, Patients, focused clinical review, Practice, clinician identity, persisted approval/edit/AI interactions | design system; shared API client and role-scoped read models |
 | Patient experience | backend engagement/scheduling use cases | initiation, intake, booking, consents, patient messages | identity, clinical facts, eligibility adapter |
 | Command center | Today/Patients/Schedule projections; backend operations queries | readiness, work queues, alerts, tasks | scheduling, clinical, pathology, RCM read models |
 | Clinical encounter | patient care-agent projection; clinical use cases | encounter state, transcript linkage, note lifecycle, assessment/plan | patients, lesions, orders, AI proposals |
@@ -86,7 +85,7 @@ Ownership means the module is the sole writer of its rules and tables. Other mod
 Path-level ownership rules:
 
 - `apps/web/**` never imports backend packages or database clients.
-- The current clinician product is fixture-backed by design. UI controls must not claim durable writes until they are connected through the shared API client and covered by integration tests.
+- Clinician product data comes from authenticated APIs through the shared client. Runtime presentation modules must not import patient/workflow fixtures or model successful writes without a domain mutation response and refreshed read model.
 - `backend/**` never imports frontend artifacts.
 - `docs/**` explains contracts; it does not replace executable constraints or tests.
 - Schema changes require an Alembic migration, an updated database document, and compatibility consideration for deployed frontend/backend versions.

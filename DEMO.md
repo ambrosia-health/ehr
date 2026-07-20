@@ -2,7 +2,7 @@
 
 Target: 6–8 minutes. The audience should leave with one idea: the dermatologist practices medicine while Ambrosia operates the administrative system around every care journey.
 
-Every person, image, message, result, claim, and dollar is synthetic. Say once at the start: "This product prototype uses explicit synthetic presentation fixtures. The repository's domain API, database workflows, authorization, audit, and AI proposal contracts are tested separately; external healthcare and payment networks remain deterministic simulations."
+Every person, image, message, result, claim, and dollar is synthetic. Say once at the start: "This product reads synthetic records from Ambrosia's authenticated domain API and persists clinician actions to the configured database. External healthcare and payment networks remain deterministic simulations."
 
 ## Preflight
 

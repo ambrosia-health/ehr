@@ -354,6 +354,8 @@ async def test_bootstrap_serialization_and_role_scope(client) -> None:
         "Wider or larger",
         "Darker color",
     ]
+    assert provider["schedule"][0]["startsAt"]
+    assert provider["schedule"][0]["time"].endswith(("AM", "PM"))
     assert provider["intake"]["draft"]["symptoms"] == ["Itching"]
     slots = provider["intake"]["availableSlots"]
     assert len(slots) == 6
